@@ -319,7 +319,11 @@ async function sendMessage(text = els.composer.value.trim()) {
     if (error.name === "AbortError") {
       assistant.content += assistant.content ? "\n\n_Generation stopped._" : "_Generation stopped._";
     } else {
-      assistant.content = `**Error:** ${error.message}`;
+      let errorMsg = error.message;
+      if (error.message.includes('quota') || error.message.includes('429')) {
+        errorMsg = "⚠️ **API Quota Exceeded**\n\nYou've reached the free tier limit. Please:\n- Wait about 1 minute and try again\n- Or upgrade your Gemini API plan for higher limits\n- Check usage at: https://aistudio.google.com/";
+      }
+      assistant.content = `**Error:** ${errorMsg}`;
     }
     save(); renderMessages();
   } finally {

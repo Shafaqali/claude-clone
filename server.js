@@ -172,11 +172,20 @@ app.post("/api/chat", async (req, res) => {
     }
     res.end();
   } catch (error) {
-    console.error(error);
+    console.error('Chat API Error:', error);
     if (!res.headersSent) {
-      res.status(500).json({
-        error: error?.message || "Gemini request failed."
-      });
+      let errorMessage = error?.message || "Gemini request failed.";
+      
+      // Handle specific quota errors
+      if (error.message?.includes('quota') || error.message?.includes('429')) {
+        errorMessage = "API quota exceeded. Please wait a moment before trying again, or check your Gemini API usage limits.";
+      } else if (error.message?.includes('API key')) {
+        errorMessage = "Invalid API key. Please check your GEMINI_API_KEY in the environment variables.";
+      } else if (error.message?.includes('model')) {
+        errorMessage = "Invalid model specified. Please use a valid Gemini model like 'gemini-1.5-flash'.";
+      }
+      
+      res.status(500).json({ error: errorMessage });
     } else {
       res.end();
     }
