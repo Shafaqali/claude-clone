@@ -1,6 +1,6 @@
 import { loadState, saveState, activeChat } from "./storage.js";
 import { renderMarkdown, plainText } from "./markdown.js";
-import { streamChat, uploadFile, checkHealth } from "./api.js";
+import { streamChat, uploadFile, checkHealth, getModels } from "./api.js";
 import { startListening, speak } from "./voice.js";
 import { runTool } from "./tools.js";
 
@@ -10,6 +10,7 @@ if (!state.activeChatId) state.activeChatId = state.chats[0].id;
 
 let controller = null;
 let attachedContext = null;
+let availableModels = [];
 
 const els = {
   sidebar: $("#sidebar"), overlay: $("#overlay"), chatList: $("#chatList"),
@@ -224,7 +225,8 @@ function escapeHtml(value) {
 function renderAll() {
   renderChatList();
   renderMessages();
-  els.modelName.textContent = state.settings.model.includes("pro") ? "Gemini Pro" : "Gemini Flash";
+  const selected = availableModels.find(model => model.id === state.settings.model);
+  els.modelName.textContent = selected?.name || state.settings.model.replace(/^gemini-/, "Gemini ");
   applyTheme();
   autosize();
 }
@@ -311,7 +313,7 @@ async function sendMessage(text = els.composer.value.trim()) {
       assistant.content = full;
       bubble.innerHTML = renderMarkdown(full) || `<div class="typing"><i></i><i></i><i></i></div>`;
       els.messages.scrollTop = els.messages.scrollHeight;
-    }, images);
+    }, images, state.settings.model);
     save();
     renderMessages();
     if (state.settings.voice === "on") speak(assistant.content);
@@ -496,13 +498,27 @@ els.toolPopover.querySelectorAll("[data-tool]").forEach(btn => {
 });
 
 $("#modelBtn").onclick = () => els.modelMenu.classList.toggle("hidden");
-els.modelMenu.querySelectorAll("[data-model]").forEach(btn => {
-  btn.onclick = () => {
-    state.settings.model = btn.dataset.model;
-    // Model selection is persisted; server uses GEMINI_MODEL for actual requests.
-    save(); renderAll(); els.modelMenu.classList.add("hidden");
-  };
-});
+function renderModelMenu() {
+  els.modelMenu.innerHTML = availableModels.map(model =>
+    `<button data-model="${escapeHtml(model.id)}">${escapeHtml(model.name)}<small>${escapeHtml(model.id)}</small></button>`
+  ).join("");
+  els.modelMenu.querySelectorAll("[data-model]").forEach(btn => {
+    btn.onclick = () => {
+      state.settings.model = btn.dataset.model;
+      save(); renderAll(); els.modelMenu.classList.add("hidden");
+    };
+  });
+}
+
+getModels().then(data => {
+  availableModels = data.models || [];
+  if (!availableModels.some(model => model.id === state.settings.model)) {
+    state.settings.model = data.defaultModel || availableModels[0]?.id || state.settings.model;
+    save();
+  }
+  renderModelMenu();
+  renderAll();
+}).catch(error => console.warn("Could not load Gemini models:", error));
 
 $("#themeBtn").onclick = () => {
   state.settings.theme = state.settings.theme === "dark" ? "light" : "dark";

@@ -3,6 +3,13 @@ export async function checkHealth() {
   return response.json();
 }
 
+export async function getModels() {
+  const response = await fetch("/api/models");
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Could not load models");
+  return data;
+}
+
 export async function uploadFile(file) {
   const form = new FormData();
   form.append("file", file);
@@ -12,11 +19,11 @@ export async function uploadFile(file) {
   return data;
 }
 
-export async function streamChat(messages, context, signal, onToken, images = []) {
+export async function streamChat(messages, context, signal, onToken, images = [], model) {
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ messages, context, images }),
+    body: JSON.stringify({ messages, context, images, model }),
     signal
   });
 

@@ -14,7 +14,21 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
-const MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const FALLBACK_MODELS = [
+  { id: "gemini-3.7-flash", name: "Gemini 3.7 Flash" },
+  { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash" },
+  { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
+  { id: "gemini-3.5-flash-lite", name: "Gemini 3.5 Flash-Lite" },
+  { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview" },
+  { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash-Lite" },
+  { id: "gemini-3-flash-preview", name: "Gemini 3 Flash Preview" },
+  { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+  { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+  { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite" },
+  { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
+  { id: "gemini-2.0-flash-lite", name: "Gemini 2.0 Flash-Lite" }
+];
 
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
@@ -70,8 +84,42 @@ app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
     configured: Boolean(process.env.GEMINI_API_KEY),
-    model: MODEL
+    model: DEFAULT_MODEL
   });
+});
+
+app.get("/api/models", async (req, res) => {
+  if (!process.env.GEMINI_API_KEY) {
+    return res.json({ models: FALLBACK_MODELS, defaultModel: DEFAULT_MODEL, live: false });
+  }
+
+  try {
+    const apiModels = [];
+    let pageToken = "";
+    do {
+      const params = new URLSearchParams({ key: process.env.GEMINI_API_KEY, pageSize: "1000" });
+      if (pageToken) params.set("pageToken", pageToken);
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?${params}`);
+      if (!response.ok) throw new Error(`Models API returned ${response.status}`);
+      const data = await response.json();
+      apiModels.push(...(data.models || []));
+      pageToken = data.nextPageToken || "";
+    } while (pageToken);
+
+    const models = apiModels
+      .filter(model => model.name?.startsWith("models/gemini-") &&
+        model.supportedGenerationMethods?.includes("generateContent"))
+      .map(model => ({
+        id: model.name.replace(/^models\//, ""),
+        name: model.displayName || model.name.replace(/^models\//, "")
+      }))
+      .sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }));
+
+    res.json({ models: models.length ? models : FALLBACK_MODELS, defaultModel: DEFAULT_MODEL, live: true });
+  } catch (error) {
+    console.warn("Could not load Gemini model list:", error.message);
+    res.json({ models: FALLBACK_MODELS, defaultModel: DEFAULT_MODEL, live: false });
+  }
 });
 
 // Test endpoint for image analysis
@@ -86,7 +134,7 @@ app.post("/api/test-image", async (req, res) => {
   }
   
   try {
-    const model = client.getGenerativeModel({ model: MODEL });
+    const model = client.getGenerativeModel({ model: DEFAULT_MODEL });
     const result = await model.generateContent([
       "Describe this image briefly:",
       {
@@ -101,7 +149,7 @@ app.post("/api/test-image", async (req, res) => {
     res.json({ 
       success: true, 
       description: response.text(),
-      model: MODEL
+      model: DEFAULT_MODEL
     });
   } catch (error) {
     console.error('Image test error:', error);
@@ -116,7 +164,10 @@ app.post("/api/chat", async (req, res) => {
     });
   }
 
-  const { messages = [], context = "", images = [] } = req.body || {};
+  const { messages = [], context = "", images = [], model: requestedModel } = req.body || {};
+  const selectedModel = typeof requestedModel === "string" && /^gemini-[a-z0-9._-]+$/i.test(requestedModel)
+    ? requestedModel
+    : DEFAULT_MODEL;
   console.log('Chat request received:', { 
     messageCount: messages.length, 
     hasContext: Boolean(context),
@@ -129,7 +180,7 @@ app.post("/api/chat", async (req, res) => {
 
   try {
     const model = client.getGenerativeModel({
-      model: MODEL,
+      model: selectedModel,
       systemInstruction: systemPrompt(context)
     });
 
@@ -164,7 +215,7 @@ app.post("/api/chat", async (req, res) => {
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("X-Model", MODEL);
+    res.setHeader("X-Model", selectedModel);
 
     for await (const chunk of result.stream) {
       const text = chunk.text();
@@ -182,7 +233,7 @@ app.post("/api/chat", async (req, res) => {
       } else if (error.message?.includes('API key')) {
         errorMessage = "Invalid API key. Please check your GEMINI_API_KEY in the environment variables.";
       } else if (error.message?.includes('model')) {
-        errorMessage = "Invalid model specified. Please use a valid Gemini model like 'gemini-1.5-flash'.";
+        errorMessage = `The selected Gemini model '${selectedModel}' is unavailable for this API key or request type.`;
       }
       
       res.status(500).json({ error: errorMessage });
