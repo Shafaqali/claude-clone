@@ -25,7 +25,7 @@ await fs.mkdir(uploadDir, { recursive: true });
 
 const upload = multer({
   dest: uploadDir,
-  limits: { fileSize: 10 * 1024 * 1024 }
+  limits: { fileSize: 50 * 1024 * 1024 } // Increased to 50MB for images/documents
 });
 
 const client = process.env.GEMINI_API_KEY
@@ -43,10 +43,25 @@ function cleanHistory(messages = []) {
 }
 
 function systemPrompt(context = "") {
-  return `You are a highly capable personal AI agent. Be helpful, accurate, concise when appropriate, and transparent about uncertainty.
+  return `You are a highly capable personal AI agent with advanced file analysis and creation capabilities. Be helpful, accurate, concise when appropriate, and transparent about uncertainty.
+
+Key Capabilities:
+- Analyze text files, code, configuration files, and documents
+- Analyze and describe images in detail (JPG, PNG, GIF, WebP, SVG, etc.)
+- Create files based on user requirements (code, documents, configurations)
+- Help with programming, writing, analysis, and problem-solving
+
 You are running inside a private Claude-inspired application. Do not claim to be Claude or Anthropic.
 Use Markdown for readable answers. For programming requests, provide practical, complete code and explain important decisions.
+
+When users ask you to create files:
+1. Provide the complete file content
+2. Use appropriate syntax and formatting
+3. Include helpful comments where needed
+4. You can create any type of text file (code, config, documentation, etc.)
+
 If the user asks you to perform an action you cannot actually perform, clearly say so instead of pretending.
+
 Current application context:
 ${context.slice(0, 12000)}`;
 }
@@ -66,7 +81,7 @@ app.post("/api/chat", async (req, res) => {
     });
   }
 
-  const { messages = [], context = "" } = req.body || {};
+  const { messages = [], context = "", images = [] } = req.body || {};
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: "At least one message is required." });
   }
@@ -78,10 +93,27 @@ app.post("/api/chat", async (req, res) => {
     });
 
     const history = cleanHistory(messages.slice(0, -1));
-    const last = messages[messages.length - 1];
+    const lastMessage = messages[messages.length - 1];
+    
+    // Prepare the content for the last message
+    let messageContent = [{ text: lastMessage.content }];
+    
+    // Add images if provided
+    if (images && images.length > 0) {
+      for (const img of images) {
+        if (img.base64 && img.mimeType) {
+          messageContent.push({
+            inlineData: {
+              data: img.base64,
+              mimeType: img.mimeType
+            }
+          });
+        }
+      }
+    }
 
     const chat = model.startChat({ history });
-    const result = await chat.sendMessageStream(last.content);
+    const result = await chat.sendMessageStream(messageContent);
 
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache");
@@ -107,26 +139,102 @@ app.post("/api/chat", async (req, res) => {
 app.post("/api/upload", upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded." });
 
-  const allowed = /\.(txt|md|json|csv|js|jsx|ts|tsx|html|css|xml|yaml|yml|sql|py|php|java|c|cpp|h|env)$/i;
+  const textFiles = /\.(txt|md|json|csv|js|jsx|ts|tsx|html|css|xml|yaml|yml|sql|py|php|java|c|cpp|h|env|log|ini|cfg|conf|sh|bat|ps1|dockerfile|gitignore|readme)$/i;
+  const imageFiles = /\.(jpg|jpeg|png|gif|bmp|webp|svg|tiff)$/i;
+  const documentFiles = /\.(pdf|doc|docx|rtf|odt)$/i;
+  const dataFiles = /\.(xlsx|xls|csv|tsv)$/i;
+  
   try {
-    if (!allowed.test(req.file.originalname)) {
+    const fileName = req.file.originalname;
+    const fileSize = req.file.size;
+    
+    // Handle different file types
+    if (textFiles.test(fileName)) {
+      // Text files - read content directly
+      const content = await fs.readFile(req.file.path, "utf8");
+      await fs.unlink(req.file.path).catch(() => {});
+      
+      res.json({
+        name: fileName,
+        size: fileSize,
+        type: "text",
+        content: content.slice(0, 100000), // Increased limit
+        analysis: `Text file with ${content.split('\n').length} lines`
+      });
+      
+    } else if (imageFiles.test(fileName)) {
+      // Images - convert to base64 for Gemini Vision API
+      const imageBuffer = await fs.readFile(req.file.path);
+      const base64Image = imageBuffer.toString('base64');
+      const mimeType = `image/${path.extname(fileName).slice(1).toLowerCase()}`;
+      
+      await fs.unlink(req.file.path).catch(() => {});
+      
+      res.json({
+        name: fileName,
+        size: fileSize,
+        type: "image",
+        mimeType: mimeType,
+        base64: base64Image,
+        analysis: `Image file (${Math.round(fileSize/1024)}KB)`
+      });
+      
+    } else if (documentFiles.test(fileName)) {
+      // Documents - placeholder for future PDF/Doc parsing
+      await fs.unlink(req.file.path).catch(() => {});
+      
+      res.json({
+        name: fileName,
+        size: fileSize,
+        type: "document",
+        content: `[Document file: ${fileName}]`,
+        analysis: `Document file - content extraction not yet implemented`
+      });
+      
+    } else {
+      // Unsupported file type
       await fs.unlink(req.file.path).catch(() => {});
       return res.status(415).json({
-        error: "This demo supports text/code files only."
+        error: `Unsupported file type. Supported: text files, images (jpg, png, gif, etc.), and documents.`
       });
     }
-
-    const content = await fs.readFile(req.file.path, "utf8");
-    await fs.unlink(req.file.path).catch(() => {});
-
-    res.json({
-      name: req.file.originalname,
-      size: req.file.size,
-      content: content.slice(0, 50000)
-    });
+    
   } catch (error) {
     await fs.unlink(req.file.path).catch(() => {});
-    res.status(500).json({ error: "Could not read uploaded file." });
+    res.status(500).json({ error: "Could not process uploaded file." });
+  }
+});
+
+app.post("/api/create-file", async (req, res) => {
+  const { filename, content, type = "text" } = req.body;
+  
+  if (!filename || !content) {
+    return res.status(400).json({ error: "Filename and content are required." });
+  }
+  
+  try {
+    // Sanitize filename to prevent directory traversal
+    const safeName = path.basename(filename);
+    const filePath = path.join(uploadDir, `generated_${Date.now()}_${safeName}`);
+    
+    if (type === "base64") {
+      // Handle base64 content (for images)
+      const buffer = Buffer.from(content, 'base64');
+      await fs.writeFile(filePath, buffer);
+    } else {
+      // Handle text content
+      await fs.writeFile(filePath, content, 'utf8');
+    }
+    
+    res.json({
+      success: true,
+      message: `File '${safeName}' created successfully`,
+      path: filePath,
+      size: content.length
+    });
+    
+  } catch (error) {
+    res.status(500).json({ error: "Failed to create file: " + error.message });
   }
 });
 

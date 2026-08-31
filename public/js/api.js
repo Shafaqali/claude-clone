@@ -12,11 +12,11 @@ export async function uploadFile(file) {
   return data;
 }
 
-export async function streamChat(messages, context, signal, onToken) {
+export async function streamChat(messages, context, signal, onToken, images = []) {
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ messages, context }),
+    body: JSON.stringify({ messages, context, images }),
     signal
   });
 
@@ -39,4 +39,16 @@ export async function streamChat(messages, context, signal, onToken) {
     onToken?.(chunk, full);
   }
   return full;
+}
+
+export async function createFile(filename, content, type = "text") {
+  const response = await fetch("/api/create-file", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ filename, content, type })
+  });
+  
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "File creation failed");
+  return data;
 }

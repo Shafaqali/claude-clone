@@ -160,15 +160,24 @@ async function sendMessage(text = els.composer.value.trim()) {
 
   const context = [
     state.settings.context,
-    attachedContext ? `Attached file: ${attachedContext.name}\n${attachedContext.content}` : ""
+    attachedContext?.content ? `Attached file: ${attachedContext.name}\n${attachedContext.content}` : ""
   ].filter(Boolean).join("\n\n");
+
+  // Prepare images array if we have an image attachment
+  const images = [];
+  if (attachedContext?.type === "image") {
+    images.push({
+      base64: attachedContext.base64,
+      mimeType: attachedContext.mimeType
+    });
+  }
 
   try {
     await streamChat(chat.messages.slice(0, -1), context, controller.signal, (_, full) => {
       assistant.content = full;
       bubble.innerHTML = renderMarkdown(full) || `<div class="typing"><i></i><i></i><i></i></div>`;
       els.messages.scrollTop = els.messages.scrollHeight;
-    });
+    }, images);
     save();
     renderMessages();
     if (state.settings.voice === "on") speak(assistant.content);
@@ -228,15 +237,55 @@ els.file.onchange = async () => {
   const file = els.file.files[0];
   if (!file) return;
   els.attachment.classList.remove("hidden");
-  els.attachment.innerHTML = "Reading <strong></strong>…";
+  els.attachment.innerHTML = "Processing <strong></strong>…";
   els.attachment.querySelector("strong").textContent = file.name;
+  
   try {
     attachedContext = await uploadFile(file);
-    els.attachment.innerHTML = `Attached <strong>${escapeHtml(attachedContext.name)}</strong> · ${(attachedContext.size/1024).toFixed(1)} KB`;
-    if (!els.composer.value.trim()) els.composer.value = `Please analyze the attached file: ${attachedContext.name}`;
+    
+    // Handle different file types
+    if (attachedContext.type === "image") {
+      // Show image preview
+      els.attachment.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <img src="data:${attachedContext.mimeType};base64,${attachedContext.base64}" 
+               style="width: 40px; height: 40px; object-fit: cover; border-radius: 6px;">
+          <div>
+            <strong>${escapeHtml(attachedContext.name)}</strong><br>
+            <small>${attachedContext.analysis}</small>
+          </div>
+        </div>
+      `;
+      if (!els.composer.value.trim()) {
+        els.composer.value = `Please analyze this image: ${attachedContext.name}`;
+      }
+    } else if (attachedContext.type === "text") {
+      // Show text file info
+      els.attachment.innerHTML = `
+        <div>
+          <strong>${escapeHtml(attachedContext.name)}</strong> · ${(attachedContext.size/1024).toFixed(1)} KB<br>
+          <small>${attachedContext.analysis}</small>
+        </div>
+      `;
+      if (!els.composer.value.trim()) {
+        els.composer.value = `Please analyze the attached file: ${attachedContext.name}`;
+      }
+    } else if (attachedContext.type === "document") {
+      // Show document info
+      els.attachment.innerHTML = `
+        <div>
+          <strong>${escapeHtml(attachedContext.name)}</strong> · ${(attachedContext.size/1024).toFixed(1)} KB<br>
+          <small>${attachedContext.analysis}</small>
+        </div>
+      `;
+      if (!els.composer.value.trim()) {
+        els.composer.value = `I've uploaded a document: ${attachedContext.name}. Please help me with it.`;
+      }
+    }
+    
     autosize();
   } catch (error) {
-    els.attachment.textContent = error.message;
+    els.attachment.innerHTML = `<span style="color: var(--error, red);">${error.message}</span>`;
   }
 };
 
