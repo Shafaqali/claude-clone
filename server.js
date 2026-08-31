@@ -74,6 +74,41 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+// Test endpoint for image analysis
+app.post("/api/test-image", async (req, res) => {
+  if (!client) {
+    return res.status(500).json({ error: "Gemini API not configured" });
+  }
+  
+  const { base64, mimeType } = req.body;
+  if (!base64 || !mimeType) {
+    return res.status(400).json({ error: "base64 and mimeType required" });
+  }
+  
+  try {
+    const model = client.getGenerativeModel({ model: MODEL });
+    const result = await model.generateContent([
+      "Describe this image briefly:",
+      {
+        inlineData: {
+          data: base64,
+          mimeType: mimeType
+        }
+      }
+    ]);
+    
+    const response = await result.response;
+    res.json({ 
+      success: true, 
+      description: response.text(),
+      model: MODEL
+    });
+  } catch (error) {
+    console.error('Image test error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post("/api/chat", async (req, res) => {
   if (!client) {
     return res.status(500).json({
@@ -106,17 +141,23 @@ app.post("/api/chat", async (req, res) => {
     
     // Add images if provided
     if (images && images.length > 0) {
+      console.log('Processing images for Gemini:', images.length);
       for (const img of images) {
         if (img.base64 && img.mimeType) {
+          console.log('Adding image:', { mimeType: img.mimeType, base64Length: img.base64.length });
           messageContent.push({
             inlineData: {
               data: img.base64,
               mimeType: img.mimeType
             }
           });
+        } else {
+          console.log('Invalid image data:', img);
         }
       }
     }
+    
+    console.log('Final messageContent:', messageContent.length, 'parts');
 
     const chat = model.startChat({ history });
     const result = await chat.sendMessageStream(messageContent);
@@ -172,7 +213,39 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
       // Images - convert to base64 for Gemini Vision API
       const imageBuffer = await fs.readFile(req.file.path);
       const base64Image = imageBuffer.toString('base64');
-      const mimeType = `image/${path.extname(fileName).slice(1).toLowerCase()}`;
+      
+      // Better MIME type detection
+      let mimeType;
+      const ext = path.extname(fileName).toLowerCase();
+      switch (ext) {
+        case '.jpg':
+        case '.jpeg':
+          mimeType = 'image/jpeg';
+          break;
+        case '.png':
+          mimeType = 'image/png';
+          break;
+        case '.gif':
+          mimeType = 'image/gif';
+          break;
+        case '.webp':
+          mimeType = 'image/webp';
+          break;
+        case '.svg':
+          mimeType = 'image/svg+xml';
+          break;
+        case '.bmp':
+          mimeType = 'image/bmp';
+          break;
+        case '.tiff':
+        case '.tif':
+          mimeType = 'image/tiff';
+          break;
+        default:
+          mimeType = 'image/jpeg'; // fallback
+      }
+      
+      console.log(`Image processed: ${fileName}, MIME: ${mimeType}, Size: ${base64Image.length}`);
       
       await fs.unlink(req.file.path).catch(() => {});
       

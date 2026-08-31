@@ -58,6 +58,33 @@ function removeAttachment() {
 // Make removeAttachment available globally
 window.removeAttachment = removeAttachment;
 
+// Test function for debugging image uploads
+window.testImageUpload = async function(file) {
+  try {
+    console.log('Testing image upload:', file.name);
+    const result = await uploadFile(file);
+    console.log('Upload result:', result);
+    
+    if (result.type === 'image' && result.base64) {
+      console.log('Testing Gemini image analysis...');
+      const response = await fetch('/api/test-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          base64: result.base64,
+          mimeType: result.mimeType
+        })
+      });
+      
+      const testResult = await response.json();
+      console.log('Gemini test result:', testResult);
+      return testResult;
+    }
+  } catch (error) {
+    console.error('Test failed:', error);
+  }
+};
+
 function applyTheme() {
   const theme = state.settings.theme || "system";
   document.documentElement.dataset.theme = theme === "system"
@@ -198,11 +225,17 @@ async function sendMessage(text = els.composer.value.trim()) {
   // Prepare images array if we have an image attachment
   const images = [];
   if (attachedContext?.type === "image") {
+    console.log('Adding image to chat:', {
+      hasBase64: Boolean(attachedContext.base64),
+      mimeType: attachedContext.mimeType,
+      base64Length: attachedContext.base64?.length
+    });
     images.push({
       base64: attachedContext.base64,
       mimeType: attachedContext.mimeType
     });
   }
+  console.log('Sending chat with images:', images.length);
 
   try {
     await streamChat(chat.messages.slice(0, -1), context, controller.signal, (_, full) => {
@@ -288,6 +321,8 @@ els.file.onchange = async () => {
   try {
     attachedContext = await uploadFile(file);
     console.log('Uploaded file:', attachedContext); // Debug log
+    console.log('File type detected:', attachedContext.type);
+    console.log('Has base64:', Boolean(attachedContext.base64));
     
     // Handle different file types with better UI
     if (attachedContext.type === "image") {
