@@ -14,7 +14,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
-const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
@@ -82,6 +82,12 @@ app.post("/api/chat", async (req, res) => {
   }
 
   const { messages = [], context = "", images = [] } = req.body || {};
+  console.log('Chat request received:', { 
+    messageCount: messages.length, 
+    hasContext: Boolean(context),
+    imageCount: images.length,
+    lastMessage: messages[messages.length - 1]?.content?.substring(0, 100)
+  });
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: "At least one message is required." });
   }

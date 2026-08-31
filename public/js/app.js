@@ -26,6 +26,38 @@ function save() {
   saveState(state);
 }
 
+function removeAttachment() {
+  attachedContext = null;
+  els.attachment.classList.add("hidden");
+  els.attachment.innerHTML = "";
+  els.file.value = ""; // Clear the file input
+  
+  // Show a brief notification
+  const notification = document.createElement('div');
+  notification.textContent = 'File removed';
+  notification.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--text);
+    z-index: 1000;
+    animation: fadeIn 0.2s ease;
+  `;
+  document.body.appendChild(notification);
+  setTimeout(() => {
+    notification.style.opacity = '0';
+    setTimeout(() => notification.remove(), 200);
+  }, 1500);
+}
+
+// Make removeAttachment available globally
+window.removeAttachment = removeAttachment;
+
 function applyTheme() {
   const theme = state.settings.theme || "system";
   document.documentElement.dataset.theme = theme === "system"
@@ -236,46 +268,79 @@ $("#attachBtn").onclick = () => els.file.click();
 els.file.onchange = async () => {
   const file = els.file.files[0];
   if (!file) return;
+  
   els.attachment.classList.remove("hidden");
-  els.attachment.innerHTML = "Processing <strong></strong>…";
-  els.attachment.querySelector("strong").textContent = file.name;
+  els.attachment.innerHTML = `
+    <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--surface-2); border-radius: 8px; margin: 8px 0;">
+      <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
+        <div style="width: 32px; height: 32px; background: var(--accent); border-radius: 6px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">
+          📄
+        </div>
+        <div>
+          <div style="font-weight: 600; font-size: 13px;">Processing...</div>
+          <div style="font-size: 11px; color: var(--muted);">${file.name}</div>
+        </div>
+      </div>
+      <button onclick="removeAttachment()" style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 4px; border-radius: 4px;" title="Remove file">×</button>
+    </div>
+  `;
   
   try {
     attachedContext = await uploadFile(file);
+    console.log('Uploaded file:', attachedContext); // Debug log
     
-    // Handle different file types
+    // Handle different file types with better UI
     if (attachedContext.type === "image") {
-      // Show image preview
+      // Show image preview with remove button
       els.attachment.innerHTML = `
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <img src="data:${attachedContext.mimeType};base64,${attachedContext.base64}" 
-               style="width: 40px; height: 40px; object-fit: cover; border-radius: 6px;">
-          <div>
-            <strong>${escapeHtml(attachedContext.name)}</strong><br>
-            <small>${attachedContext.analysis}</small>
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--surface-2); border-radius: 8px; margin: 8px 0;">
+          <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
+            <img src="data:${attachedContext.mimeType};base64,${attachedContext.base64}" 
+                 style="width: 40px; height: 40px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border);">
+            <div>
+              <div style="font-weight: 600; font-size: 13px; color: var(--text);">📷 Image attached</div>
+              <div style="font-size: 11px; color: var(--muted);">${escapeHtml(attachedContext.name)} • ${attachedContext.analysis}</div>
+            </div>
           </div>
+          <button onclick="removeAttachment()" style="background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 4px; border-radius: 4px; line-height: 1;" title="Remove image">×</button>
         </div>
       `;
       if (!els.composer.value.trim()) {
         els.composer.value = `Please analyze this image: ${attachedContext.name}`;
       }
     } else if (attachedContext.type === "text") {
-      // Show text file info
+      // Show text file info with remove button
       els.attachment.innerHTML = `
-        <div>
-          <strong>${escapeHtml(attachedContext.name)}</strong> · ${(attachedContext.size/1024).toFixed(1)} KB<br>
-          <small>${attachedContext.analysis}</small>
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--surface-2); border-radius: 8px; margin: 8px 0;">
+          <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
+            <div style="width: 32px; height: 32px; background: var(--accent); border-radius: 6px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">
+              📄
+            </div>
+            <div>
+              <div style="font-weight: 600; font-size: 13px; color: var(--text);">📝 ${escapeHtml(attachedContext.name)}</div>
+              <div style="font-size: 11px; color: var(--muted);">${(attachedContext.size/1024).toFixed(1)} KB • ${attachedContext.analysis}</div>
+            </div>
+          </div>
+          <button onclick="removeAttachment()" style="background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 4px; border-radius: 4px; line-height: 1;" title="Remove file">×</button>
         </div>
       `;
       if (!els.composer.value.trim()) {
         els.composer.value = `Please analyze the attached file: ${attachedContext.name}`;
       }
     } else if (attachedContext.type === "document") {
-      // Show document info
+      // Show document info with remove button
       els.attachment.innerHTML = `
-        <div>
-          <strong>${escapeHtml(attachedContext.name)}</strong> · ${(attachedContext.size/1024).toFixed(1)} KB<br>
-          <small>${attachedContext.analysis}</small>
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--surface-2); border-radius: 8px; margin: 8px 0;">
+          <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
+            <div style="width: 32px; height: 32px; background: var(--accent); border-radius: 6px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">
+              📋
+            </div>
+            <div>
+              <div style="font-weight: 600; font-size: 13px; color: var(--text);">📋 ${escapeHtml(attachedContext.name)}</div>
+              <div style="font-size: 11px; color: var(--muted);">${(attachedContext.size/1024).toFixed(1)} KB • ${attachedContext.analysis}</div>
+            </div>
+          </div>
+          <button onclick="removeAttachment()" style="background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 4px; border-radius: 4px; line-height: 1;" title="Remove document">×</button>
         </div>
       `;
       if (!els.composer.value.trim()) {
@@ -285,7 +350,21 @@ els.file.onchange = async () => {
     
     autosize();
   } catch (error) {
-    els.attachment.innerHTML = `<span style="color: var(--error, red);">${error.message}</span>`;
+    console.error('Upload error:', error); // Debug log
+    els.attachment.innerHTML = `
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--surface-2); border-radius: 8px; margin: 8px 0; border-left: 3px solid #ef4444;">
+        <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
+          <div style="width: 32px; height: 32px; background: #ef4444; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">
+            ⚠️
+          </div>
+          <div>
+            <div style="font-weight: 600; font-size: 13px; color: #ef4444;">Upload failed</div>
+            <div style="font-size: 11px; color: var(--muted);">${error.message}</div>
+          </div>
+        </div>
+        <button onclick="removeAttachment()" style="background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 4px; border-radius: 4px; line-height: 1;" title="Remove">×</button>
+      </div>
+    `;
   }
 };
 
