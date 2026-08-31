@@ -126,11 +126,65 @@ function renderMessages() {
   chat.messages.forEach((message, index) => {
     const article = document.createElement("article");
     article.className = `message ${message.role}`;
+    
+    // Add avatar for assistant messages
+    if (message.role === "assistant") {
+      const avatar = document.createElement("div");
+      avatar.className = "message-avatar";
+      avatar.textContent = "AI";
+      article.appendChild(avatar);
+    }
+    
     const bubble = document.createElement("div");
     bubble.className = "bubble message-content";
-    bubble.innerHTML = message.role === "assistant"
+    
+    // Show attachment info if present
+    let attachmentHtml = "";
+    if (message.attachment) {
+      const att = message.attachment;
+      if (att.type === "image" && att.base64) {
+        attachmentHtml = `
+          <div style="margin-bottom: 12px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+              <img src="data:${att.mimeType};base64,${att.base64}" 
+                   style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border);">
+              <div>
+                <div style="font-weight: 600; font-size: 12px;">📷 ${escapeHtml(att.name)}</div>
+                <div style="font-size: 11px; color: var(--muted);">${Math.round(att.size/1024)}KB image</div>
+              </div>
+            </div>
+          </div>
+        `;
+      } else if (att.type === "text") {
+        attachmentHtml = `
+          <div style="margin-bottom: 12px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div style="width: 24px; height: 24px; background: var(--accent); border-radius: 4px; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px;">📄</div>
+              <div>
+                <div style="font-weight: 600; font-size: 12px;">${escapeHtml(att.name)}</div>
+                <div style="font-size: 11px; color: var(--muted);">${Math.round(att.size/1024)}KB text file</div>
+              </div>
+            </div>
+          </div>
+        `;
+      } else if (att.type === "document") {
+        attachmentHtml = `
+          <div style="margin-bottom: 12px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div style="width: 24px; height: 24px; background: var(--accent); border-radius: 4px; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px;">📋</div>
+              <div>
+                <div style="font-weight: 600; font-size: 12px;">${escapeHtml(att.name)}</div>
+                <div style="font-size: 11px; color: var(--muted);">${Math.round(att.size/1024)}KB document</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+    }
+    
+    bubble.innerHTML = attachmentHtml + (message.role === "assistant"
       ? renderMarkdown(message.content)
-      : `<p>${escapeHtml(message.content).replace(/\n/g,"<br>")}</p>`;
+      : `<p>${escapeHtml(message.content).replace(/\n/g,"<br>")}</p>`);
 
     if (message.role === "assistant") {
       const actions = document.createElement("div");
@@ -194,7 +248,21 @@ async function sendMessage(text = els.composer.value.trim()) {
   if (!text || controller) return;
 
   const chat = current();
+  
+  // Create user message with attachment info
   const userMessage = { role: "user", content: text };
+  
+  // If there's an attachment, add it to the message for display
+  if (attachedContext) {
+    userMessage.attachment = {
+      name: attachedContext.name,
+      type: attachedContext.type,
+      size: attachedContext.size,
+      mimeType: attachedContext.mimeType,
+      base64: attachedContext.type === "image" ? attachedContext.base64 : null
+    };
+  }
+  
   chat.messages.push(userMessage);
 
   if (chat.title === "New conversation") {
@@ -202,6 +270,7 @@ async function sendMessage(text = els.composer.value.trim()) {
   }
 
   els.composer.value = "";
+  const currentAttachment = attachedContext; // Store reference before clearing
   attachedContext = null;
   els.attachment.classList.add("hidden");
   save(); renderAll();
@@ -219,20 +288,20 @@ async function sendMessage(text = els.composer.value.trim()) {
 
   const context = [
     state.settings.context,
-    attachedContext?.content ? `Attached file: ${attachedContext.name}\n${attachedContext.content}` : ""
+    currentAttachment?.content ? `Attached file: ${currentAttachment.name}\n${currentAttachment.content}` : ""
   ].filter(Boolean).join("\n\n");
 
   // Prepare images array if we have an image attachment
   const images = [];
-  if (attachedContext?.type === "image") {
+  if (currentAttachment?.type === "image") {
     console.log('Adding image to chat:', {
-      hasBase64: Boolean(attachedContext.base64),
-      mimeType: attachedContext.mimeType,
-      base64Length: attachedContext.base64?.length
+      hasBase64: Boolean(currentAttachment.base64),
+      mimeType: currentAttachment.mimeType,
+      base64Length: currentAttachment.base64?.length
     });
     images.push({
-      base64: attachedContext.base64,
-      mimeType: attachedContext.mimeType
+      base64: currentAttachment.base64,
+      mimeType: currentAttachment.mimeType
     });
   }
   console.log('Sending chat with images:', images.length);
@@ -333,16 +402,14 @@ els.file.onchange = async () => {
             <img src="data:${attachedContext.mimeType};base64,${attachedContext.base64}" 
                  style="width: 40px; height: 40px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border);">
             <div>
-              <div style="font-weight: 600; font-size: 13px; color: var(--text);">📷 Image attached</div>
+              <div style="font-weight: 600; font-size: 13px; color: var(--text);">📷 Image ready</div>
               <div style="font-size: 11px; color: var(--muted);">${escapeHtml(attachedContext.name)} • ${attachedContext.analysis}</div>
             </div>
           </div>
           <button onclick="removeAttachment()" style="background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 4px; border-radius: 4px; line-height: 1;" title="Remove image">×</button>
         </div>
       `;
-      if (!els.composer.value.trim()) {
-        els.composer.value = `Please analyze this image: ${attachedContext.name}`;
-      }
+      // DON'T auto-fill composer - let user type their own question
     } else if (attachedContext.type === "text") {
       // Show text file info with remove button
       els.attachment.innerHTML = `
@@ -352,16 +419,14 @@ els.file.onchange = async () => {
               📄
             </div>
             <div>
-              <div style="font-weight: 600; font-size: 13px; color: var(--text);">📝 ${escapeHtml(attachedContext.name)}</div>
-              <div style="font-size: 11px; color: var(--muted);">${(attachedContext.size/1024).toFixed(1)} KB • ${attachedContext.analysis}</div>
+              <div style="font-weight: 600; font-size: 13px; color: var(--text);">📝 File ready</div>
+              <div style="font-size: 11px; color: var(--muted);">${escapeHtml(attachedContext.name)} • ${(attachedContext.size/1024).toFixed(1)} KB • ${attachedContext.analysis}</div>
             </div>
           </div>
           <button onclick="removeAttachment()" style="background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 4px; border-radius: 4px; line-height: 1;" title="Remove file">×</button>
         </div>
       `;
-      if (!els.composer.value.trim()) {
-        els.composer.value = `Please analyze the attached file: ${attachedContext.name}`;
-      }
+      // DON'T auto-fill composer
     } else if (attachedContext.type === "document") {
       // Show document info with remove button
       els.attachment.innerHTML = `
@@ -371,16 +436,14 @@ els.file.onchange = async () => {
               📋
             </div>
             <div>
-              <div style="font-weight: 600; font-size: 13px; color: var(--text);">📋 ${escapeHtml(attachedContext.name)}</div>
-              <div style="font-size: 11px; color: var(--muted);">${(attachedContext.size/1024).toFixed(1)} KB • ${attachedContext.analysis}</div>
+              <div style="font-weight: 600; font-size: 13px; color: var(--text);">📋 Document ready</div>
+              <div style="font-size: 11px; color: var(--muted);">${escapeHtml(attachedContext.name)} • ${(attachedContext.size/1024).toFixed(1)} KB • ${attachedContext.analysis}</div>
             </div>
           </div>
           <button onclick="removeAttachment()" style="background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 4px; border-radius: 4px; line-height: 1;" title="Remove document">×</button>
         </div>
       `;
-      if (!els.composer.value.trim()) {
-        els.composer.value = `I've uploaded a document: ${attachedContext.name}. Please help me with it.`;
-      }
+      // DON'T auto-fill composer
     }
     
     autosize();
