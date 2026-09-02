@@ -252,6 +252,8 @@ app.post("/api/chat", async (req, res) => {
         continue;
       }
     }
+  }
+
   // If we get here, all models failed
   console.error('All models failed. Last error:', lastError);
   if (!res.headersSent) {
