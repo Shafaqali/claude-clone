@@ -172,6 +172,7 @@ app.post("/api/chat", async (req, res) => {
   const selectedModel = typeof requestedModel === "string" && /^gemini-[a-z0-9._-]+$/i.test(requestedModel)
     ? requestedModel
     : MODEL;
+  
   console.log('Chat request received:', { 
     messageCount: messages.length, 
     hasContext: Boolean(context),
@@ -179,72 +180,95 @@ app.post("/api/chat", async (req, res) => {
     selectedModel: selectedModel,
     lastMessage: messages[messages.length - 1]?.content?.substring(0, 100)
   });
+  
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: "At least one message is required." });
   }
 
-  try {
-    const model = client.getGenerativeModel({
-      model: selectedModel,
-      systemInstruction: systemPrompt(context)
-    });
+  // Try multiple model fallbacks if the selected model doesn't work
+  const modelFallbacks = [
+    selectedModel,
+    "gemini-1.5-flash",
+    "gemini-1.0-pro",
+    "gemini-pro"
+  ];
 
-    const history = cleanHistory(messages.slice(0, -1));
-    const lastMessage = messages[messages.length - 1];
-    
-    // Prepare the content for the last message
-    let messageContent = [{ text: lastMessage.content }];
-    
-    // Add images if provided
-    if (images && images.length > 0) {
-      console.log('Processing images for Gemini:', images.length);
-      for (const img of images) {
-        if (img.base64 && img.mimeType) {
-          console.log('Adding image:', { mimeType: img.mimeType, base64Length: img.base64.length });
-          messageContent.push({
-            inlineData: {
-              data: img.base64,
-              mimeType: img.mimeType
-            }
-          });
-        } else {
-          console.log('Invalid image data:', img);
+  let lastError = null;
+  
+  for (const testModel of modelFallbacks) {
+    try {
+      console.log(`Trying model: ${testModel}`);
+      const model = client.getGenerativeModel({
+        model: testModel,
+        systemInstruction: systemPrompt(context)
+      });
+
+      const history = cleanHistory(messages.slice(0, -1));
+      const lastMessage = messages[messages.length - 1];
+      
+      // Prepare the content for the last message
+      let messageContent = [{ text: lastMessage.content }];
+      
+      // Add images if provided
+      if (images && images.length > 0) {
+        console.log('Processing images for Gemini:', images.length);
+        for (const img of images) {
+          if (img.base64 && img.mimeType) {
+            console.log('Adding image:', { mimeType: img.mimeType, base64Length: img.base64.length });
+            messageContent.push({
+              inlineData: {
+                data: img.base64,
+                mimeType: img.mimeType
+              }
+            });
+          } else {
+            console.log('Invalid image data:', img);
+          }
         }
       }
+      
+      console.log('Final messageContent:', messageContent.length, 'parts');
+
+      const chat = model.startChat({ history });
+      const result = await chat.sendMessageStream(messageContent);
+
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("X-Model", testModel);
+
+      for await (const chunk of result.stream) {
+        const text = chunk.text();
+        if (text) res.write(text);
+      }
+      res.end();
+      return; // Success! Exit the function
+      
+    } catch (error) {
+      console.error(`Model ${testModel} failed:`, error.message);
+      lastError = error;
+      
+      // If this isn't the last model in the list, continue to next
+      if (testModel !== modelFallbacks[modelFallbacks.length - 1]) {
+        continue;
+      }
+    }
+  // If we get here, all models failed
+  console.error('All models failed. Last error:', lastError);
+  if (!res.headersSent) {
+    let errorMessage = lastError?.message || "All Gemini models failed.";
+    
+    // Handle specific errors
+    if (errorMessage.includes('unavailable') || errorMessage.includes('not found')) {
+      errorMessage = "⚠️ **Model Access Issue**\n\nYour API key doesn't have access to the requested Gemini models. Please:\n\n1. **Get a new API key** from https://aistudio.google.com/\n2. **Make sure it starts with 'AIza'**\n3. **Restart the server** after updating .env\n\nTried models: " + modelFallbacks.join(', ');
+    } else if (errorMessage.includes('quota') || errorMessage.includes('429')) {
+      errorMessage = "API quota exceeded. Please wait a moment before trying again, or check your Gemini API usage limits.";
+    } else if (errorMessage.includes('API key')) {
+      errorMessage = "Invalid API key. Please check your GEMINI_API_KEY in the .env file.";
     }
     
-    console.log('Final messageContent:', messageContent.length, 'parts');
-
-    const chat = model.startChat({ history });
-    const result = await chat.sendMessageStream(messageContent);
-
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("X-Model", selectedModel);
-
-    for await (const chunk of result.stream) {
-      const text = chunk.text();
-      if (text) res.write(text);
-    }
+    res.status(500).json({ error: errorMessage });
+  } else {
     res.end();
-  } catch (error) {
-    console.error('Chat API Error:', error);
-    if (!res.headersSent) {
-      let errorMessage = error?.message || "Gemini request failed.";
-      
-      // Handle specific quota errors
-      if (error.message?.includes('quota') || error.message?.includes('429')) {
-        errorMessage = "API quota exceeded. Please wait a moment before trying again, or check your Gemini API usage limits.";
-      } else if (error.message?.includes('API key')) {
-        errorMessage = "Invalid API key. Please check your GEMINI_API_KEY in the environment variables.";
-      } else if (error.message?.includes('model')) {
-        errorMessage = `The selected Gemini model '${selectedModel}' is unavailable for this API key or request type.`;
-      }
-      
-      res.status(500).json({ error: errorMessage });
-    } else {
-      res.end();
-    }
   }
 });
 
