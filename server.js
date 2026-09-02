@@ -32,6 +32,13 @@ const client = process.env.GEMINI_API_KEY
   ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
   : null;
 
+// Validate API key format
+if (process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.startsWith('AIza')) {
+  console.warn('⚠️  WARNING: API key format appears incorrect. Gemini API keys should start with "AIza"');
+  console.warn('   Current key starts with:', process.env.GEMINI_API_KEY.substring(0, 10) + '...');
+  console.warn('   Please get a new key from: https://aistudio.google.com/');
+}
+
 function cleanHistory(messages = []) {
   return messages
     .filter(m => ["user", "assistant"].includes(m.role) && typeof m.content === "string")
@@ -69,7 +76,20 @@ ${context.slice(0, 12000)}`;
 // Quick test endpoint
 app.get("/api/test-key", async (req, res) => {
   if (!client) {
-    return res.json({ error: "No API key configured" });
+    return res.json({ 
+      error: "❌ No API key configured",
+      solution: "Add GEMINI_API_KEY to .env file"
+    });
+  }
+  
+  // Check API key format
+  if (!process.env.GEMINI_API_KEY.startsWith('AIza')) {
+    return res.json({ 
+      error: "❌ Invalid API key format", 
+      current: process.env.GEMINI_API_KEY.substring(0, 10) + '...',
+      expected: "Should start with 'AIza'",
+      solution: "Get new key from https://aistudio.google.com/"
+    });
   }
   
   try {
@@ -79,12 +99,25 @@ app.get("/api/test-key", async (req, res) => {
     res.json({ 
       success: true, 
       message: response.text(),
-      model: "gemini-1.5-flash"
+      model: "gemini-1.5-flash",
+      keyFormat: "✅ Correct (starts with AIza)"
     });
   } catch (error) {
+    let errorMsg = "API key test failed";
+    let solution = "Check your API key";
+    
+    if (error.message?.includes('suspended') || error.message?.includes('CONSUMER_SUSPENDED')) {
+      errorMsg = "🚨 API key suspended";
+      solution = "Create new API key at https://aistudio.google.com/";
+    } else if (error.message?.includes('403') || error.message?.includes('Forbidden')) {
+      errorMsg = "🔑 API key invalid or no access";
+      solution = "Get new API key from https://aistudio.google.com/";
+    }
+    
     res.json({ 
-      error: error.message,
-      details: error.toString()
+      error: errorMsg,
+      details: error.message,
+      solution: solution
     });
   }
 });
@@ -246,6 +279,21 @@ app.post("/api/chat", async (req, res) => {
     } catch (error) {
       console.error(`Model ${testModel} failed:`, error.message);
       lastError = error;
+      
+      // Check for specific error types
+      if (error.message?.includes('suspended') || error.message?.includes('CONSUMER_SUSPENDED')) {
+        // API key suspended - show immediate error, don't try other models
+        return res.status(403).json({ 
+          error: "🚨 **API Key Suspended**\n\nYour Google API key has been suspended. Please:\n\n1. **Create a new API key** at https://aistudio.google.com/\n2. **Make sure it starts with 'AIza'**\n3. **Update your .env file**\n4. **Restart the server**\n\n⚠️ Current key format is invalid: API keys should start with 'AIza', not 'AQ.'"
+        });
+      }
+      
+      if (error.message?.includes('403') || error.message?.includes('Forbidden')) {
+        // Invalid API key format or no access
+        return res.status(403).json({ 
+          error: "🔑 **Invalid API Key**\n\nYour API key format is incorrect. Please:\n\n1. **Go to** https://aistudio.google.com/\n2. **Create new API key** (should start with 'AIza')\n3. **Replace in .env file**\n4. **Restart server**\n\n❌ Current format: AQ.xxx (incorrect)\n✅ Should be: AIzaXXX (correct)"
+        });
+      }
       
       // If this isn't the last model in the list, continue to next
       if (testModel !== modelFallbacks[modelFallbacks.length - 1]) {
