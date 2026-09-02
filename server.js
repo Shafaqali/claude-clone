@@ -66,14 +66,33 @@ Current application context:
 ${context.slice(0, 12000)}`;
 }
 
+// Quick test endpoint
+app.get("/api/test-key", async (req, res) => {
+  if (!client) {
+    return res.json({ error: "No API key configured" });
+  }
+  
+  try {
+    const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const result = await model.generateContent("Say 'Hello, API key is working!'");
+    const response = await result.response;
+    res.json({ 
+      success: true, 
+      message: response.text(),
+      model: "gemini-1.5-flash"
+    });
+  } catch (error) {
+    res.json({ 
+      error: error.message,
+      details: error.toString()
+    });
+  }
+});
+
 app.get("/api/health", (req, res) => {
   const availableModels = [
     { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", limits: "15 RPM, 1,500 RPD" },
-    { id: "gemini-1.5-flash-8b", name: "Gemini 1.5 Flash 8B", limits: "15 RPM, 1,500 RPD" },
-    { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", limits: "2 RPM, 50 RPD" },
-    { id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash", limits: "Experimental" },
-    { id: "gemini-exp-1114", name: "Gemini Experimental", limits: "Experimental" },
-    { id: "gemini-exp-1121", name: "Gemini Exp 1121", limits: "Latest Experimental" }
+    { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", limits: "2 RPM, 50 RPD" }
   ];
 
   res.json({
@@ -168,6 +187,7 @@ app.post("/api/chat", async (req, res) => {
     messageCount: messages.length, 
     hasContext: Boolean(context),
     imageCount: images.length,
+    selectedModel: selectedModel,
     lastMessage: messages[messages.length - 1]?.content?.substring(0, 100)
   });
   if (!Array.isArray(messages) || messages.length === 0) {

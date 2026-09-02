@@ -7,11 +7,7 @@ import { runTool } from "./tools.js";
 // Available Gemini models with proper names
 const availableModels = [
   { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", description: "Fast & Free" },
-  { id: "gemini-1.5-flash-8b", name: "Gemini 1.5 Flash 8B", description: "Ultra Fast" },
-  { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", description: "Advanced" },
-  { id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash", description: "Latest (Experimental)" },
-  { id: "gemini-exp-1114", name: "Gemini Experimental", description: "Cutting Edge" },
-  { id: "gemini-exp-1121", name: "Gemini Exp 1121", description: "Latest Experimental" }
+  { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", description: "Advanced" }
 ];
 
 const $ = s => document.querySelector(s);
