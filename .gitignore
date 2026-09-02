@@ -3,3 +3,7 @@ node_modules/
 uploads/
 .DS_Store
 *.log
+
+# Environment variables with sensitive data
+.env.local
+.env.production

@@ -32,11 +32,15 @@ const client = process.env.GEMINI_API_KEY
   ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
   : null;
 
-// Validate API key format
-if (process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.startsWith('AIza')) {
-  console.warn('⚠️  WARNING: API key format appears incorrect. Gemini API keys should start with "AIza"');
+// Validate API key format (Updated for new AQ. format support)
+if (process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.startsWith('AIza') && !process.env.GEMINI_API_KEY.startsWith('AQ.')) {
+  console.warn('⚠️  WARNING: API key format appears incorrect.');
   console.warn('   Current key starts with:', process.env.GEMINI_API_KEY.substring(0, 10) + '...');
-  console.warn('   Please get a new key from: https://aistudio.google.com/');
+  console.warn('   Accepted formats: AIza (old) or AQ. (new)');
+  console.warn('   Get a new key from: https://aistudio.google.com/');
+} else if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.startsWith('AQ.')) {
+  console.log('✅ Using NEW AQ. format key (Google\'s latest standard)');
+  console.log('   This is the correct format for 2026+');
 }
 
 function cleanHistory(messages = []) {
@@ -82,15 +86,16 @@ app.get("/api/test-key", async (req, res) => {
     });
   }
   
-  // Check API key format
-  if (!process.env.GEMINI_API_KEY.startsWith('AIza')) {
-    return res.json({ 
-      error: "❌ Invalid API key format", 
-      current: process.env.GEMINI_API_KEY.substring(0, 10) + '...',
-      expected: "Should start with 'AIza'",
-      solution: "Get new key from https://aistudio.google.com/"
-    });
-  }
+    // Check API key format (Updated for AQ. support)
+    if (!process.env.GEMINI_API_KEY.startsWith('AIza') && !process.env.GEMINI_API_KEY.startsWith('AQ.')) {
+      return res.json({ 
+        error: "❌ Invalid API key format", 
+        current: process.env.GEMINI_API_KEY.substring(0, 10) + '...',
+        expected: "Should start with 'AIza' or 'AQ.'",
+        solution: "Get new key from https://aistudio.google.com/app/apikey",
+        note: "Both AIza and AQ. formats are supported"
+      });
+    }
   
   try {
     const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
@@ -291,7 +296,7 @@ app.post("/api/chat", async (req, res) => {
       if (error.message?.includes('403') || error.message?.includes('Forbidden')) {
         // Invalid API key format or no access
         return res.status(403).json({ 
-          error: "🔑 **Invalid API Key**\n\nYour API key format is incorrect. Please:\n\n1. **Go to** https://aistudio.google.com/\n2. **Create new API key** (should start with 'AIza')\n3. **Replace in .env file**\n4. **Restart server**\n\n❌ Current format: AQ.xxx (incorrect)\n✅ Should be: AIzaXXX (correct)"
+          error: "🔑 **Invalid API Key**\n\nYour API key format is incorrect. Please:\n\n1. **Go to** https://aistudio.google.com/\n2. **Create new API key** (should start with 'AIza')\n3. **Replace in .env file**\n4. **Restart server**\n\n❌ Current format: AQ.xxx (may not work)\n✅ Preferred format: AIzaXXX (standard)"
         });
       }
       
