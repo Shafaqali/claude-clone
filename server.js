@@ -14,21 +14,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-const FALLBACK_MODELS = [
-  { id: "gemini-3.7-flash", name: "Gemini 3.7 Flash" },
-  { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash" },
-  { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
-  { id: "gemini-3.5-flash-lite", name: "Gemini 3.5 Flash-Lite" },
-  { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview" },
-  { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash-Lite" },
-  { id: "gemini-3-flash-preview", name: "Gemini 3 Flash Preview" },
-  { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro" },
-  { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-  { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite" },
-  { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },
-  { id: "gemini-2.0-flash-lite", name: "Gemini 2.0 Flash-Lite" }
-];
+const MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
@@ -81,10 +67,20 @@ ${context.slice(0, 12000)}`;
 }
 
 app.get("/api/health", (req, res) => {
+  const availableModels = [
+    { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", limits: "15 RPM, 1,500 RPD" },
+    { id: "gemini-1.5-flash-8b", name: "Gemini 1.5 Flash 8B", limits: "15 RPM, 1,500 RPD" },
+    { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", limits: "2 RPM, 50 RPD" },
+    { id: "gemini-2.0-flash-exp", name: "Gemini 2.0 Flash", limits: "Experimental" },
+    { id: "gemini-exp-1114", name: "Gemini Experimental", limits: "Experimental" },
+    { id: "gemini-exp-1121", name: "Gemini Exp 1121", limits: "Latest Experimental" }
+  ];
+
   res.json({
     ok: true,
     configured: Boolean(process.env.GEMINI_API_KEY),
-    model: DEFAULT_MODEL
+    model: MODEL,
+    availableModels: availableModels
   });
 });
 
@@ -134,7 +130,7 @@ app.post("/api/test-image", async (req, res) => {
   }
   
   try {
-    const model = client.getGenerativeModel({ model: DEFAULT_MODEL });
+    const model = client.getGenerativeModel({ model: MODEL });
     const result = await model.generateContent([
       "Describe this image briefly:",
       {
@@ -167,7 +163,7 @@ app.post("/api/chat", async (req, res) => {
   const { messages = [], context = "", images = [], model: requestedModel } = req.body || {};
   const selectedModel = typeof requestedModel === "string" && /^gemini-[a-z0-9._-]+$/i.test(requestedModel)
     ? requestedModel
-    : DEFAULT_MODEL;
+    : MODEL;
   console.log('Chat request received:', { 
     messageCount: messages.length, 
     hasContext: Boolean(context),
