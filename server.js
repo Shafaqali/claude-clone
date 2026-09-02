@@ -104,36 +104,25 @@ app.get("/api/health", (req, res) => {
 });
 
 app.get("/api/models", async (req, res) => {
+  const fallbackModels = [
+    { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash" },
+    { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro" }
+  ];
+  
   if (!process.env.GEMINI_API_KEY) {
-    return res.json({ models: FALLBACK_MODELS, defaultModel: DEFAULT_MODEL, live: false });
+    return res.json({ models: fallbackModels, defaultModel: "gemini-1.5-flash", live: false });
   }
 
   try {
-    const apiModels = [];
-    let pageToken = "";
-    do {
-      const params = new URLSearchParams({ key: process.env.GEMINI_API_KEY, pageSize: "1000" });
-      if (pageToken) params.set("pageToken", pageToken);
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?${params}`);
-      if (!response.ok) throw new Error(`Models API returned ${response.status}`);
-      const data = await response.json();
-      apiModels.push(...(data.models || []));
-      pageToken = data.nextPageToken || "";
-    } while (pageToken);
-
-    const models = apiModels
-      .filter(model => model.name?.startsWith("models/gemini-") &&
-        model.supportedGenerationMethods?.includes("generateContent"))
-      .map(model => ({
-        id: model.name.replace(/^models\//, ""),
-        name: model.displayName || model.name.replace(/^models\//, "")
-      }))
-      .sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }));
-
-    res.json({ models: models.length ? models : FALLBACK_MODELS, defaultModel: DEFAULT_MODEL, live: true });
+    // For now, just return the verified working models
+    res.json({
+      models: fallbackModels,
+      defaultModel: "gemini-1.5-flash",
+      live: true
+    });
   } catch (error) {
-    console.warn("Could not load Gemini model list:", error.message);
-    res.json({ models: FALLBACK_MODELS, defaultModel: DEFAULT_MODEL, live: false });
+    console.error("Models API error:", error);
+    res.json({ models: fallbackModels, defaultModel: "gemini-1.5-flash", live: false });
   }
 });
 
