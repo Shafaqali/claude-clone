@@ -1,6 +1,7 @@
-const CACHE_NAME = 'claude-ai-v1';
-const urlsToCache = [
+const CACHE_NAME = 'claude-ai-v2';
+const APP_SHELL = [
   '/',
+  '/manifest.json',
   '/css/styles.css',
   '/css/themes.css',
   '/js/app.js',
@@ -17,21 +18,28 @@ const urlsToCache = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('Opened cache');
-        return cache.addAll(urlsToCache);
-      })
+      .then((cache) => cache.addAll(APP_SHELL))
+      .then(() => self.skipWaiting())
   );
 });
 
 // Fetch event
 self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+
+  const requestUrl = new URL(event.request.url);
+  if (requestUrl.origin !== self.location.origin || requestUrl.pathname.startsWith('/api/')) return;
+
   event.respondWith(
-    caches.match(event.request)
+    fetch(event.request)
       .then((response) => {
-        // Return cached version or fetch from network
-        return response || fetch(event.request);
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        }
+        return response;
       })
+      .catch(() => caches.match(event.request).then((response) => response || caches.match('/')))
   );
 });
 
@@ -46,6 +54,6 @@ self.addEventListener('activate', (event) => {
           }
         })
       );
-    })
+    }).then(() => self.clients.claim())
   );
 });
