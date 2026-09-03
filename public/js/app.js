@@ -22,7 +22,7 @@ const els = {
   messages: $("#messages"), welcome: $("#welcome"), composer: $("#composer"),
   send: $("#sendBtn"), stop: $("#stopBtn"), attachment: $("#attachmentPreview"),
   file: $("#fileInput"), settings: $("#settingsDialog"), modelMenu: $("#modelMenu"),
-  modelName: $("#modelName"), toolPopover: $("#toolPopover")
+  modelName: $("#modelName"), toolPopover: $("#toolPopover"), brand: $("#brandButton")
 };
 
 function current() { return activeChat(state); }
@@ -101,14 +101,24 @@ function applyTheme() {
 function renderChatList() {
   const query = $("#searchChats").value.toLowerCase();
   els.chatList.innerHTML = "";
-  state.chats
+  const filtered = state.chats
     .filter(c => c.title.toLowerCase().includes(query))
-    .sort((a,b) => b.updatedAt - a.updatedAt)
-    .forEach(chat => {
+    .sort((a,b) => b.updatedAt - a.updatedAt);
+
+  if (filtered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "chat-list-empty";
+    empty.textContent = query ? "No chats match your search." : "No chats yet.";
+    els.chatList.appendChild(empty);
+    return;
+  }
+
+  filtered.forEach(chat => {
       const row = document.createElement("div");
       row.className = `chat-item ${chat.id === state.activeChatId ? "active" : ""}`;
-      row.innerHTML = `<span>◦</span><span class="title"></span><button class="chat-delete" title="Delete">×</button>`;
+      row.innerHTML = `<span>◦</span><span class="title"></span><button class="chat-delete" title="Delete chat">×</button>`;
       row.querySelector(".title").textContent = chat.title;
+      row.title = chat.title;
       row.addEventListener("click", e => {
         if (e.target.closest(".chat-delete")) return;
         state.activeChatId = chat.id; save(); renderAll(); closeMobile();
@@ -233,6 +243,7 @@ function renderAll() {
   const selected = availableModels.find(model => model.id === state.settings.model);
   els.modelName.textContent = selected?.name || "Gemini";
   applyTheme();
+  applySidebarCollapsed();
   autosize();
 }
 
@@ -358,11 +369,20 @@ function closeMobile() {
   els.overlay.classList.add("hidden");
 }
 
+function applySidebarCollapsed() {
+  els.sidebar.classList.toggle("collapsed", Boolean(state.settings.sidebarCollapsed));
+}
+
 $("#newChatBtn").onclick = newChat;
 $("#openSidebar").onclick = () => { els.sidebar.classList.add("open"); els.overlay.classList.remove("hidden"); };
 $("#closeSidebar").onclick = closeMobile;
 els.overlay.onclick = closeMobile;
 $("#searchChats").oninput = renderChatList;
+
+els.brand.onclick = () => {
+  state.settings.sidebarCollapsed = !state.settings.sidebarCollapsed;
+  save(); applySidebarCollapsed();
+};
 
 $("#composer").addEventListener("input", autosize);
 $("#composer").addEventListener("keydown", e => {
@@ -502,7 +522,6 @@ els.toolPopover.querySelectorAll("[data-tool]").forEach(btn => {
   };
 });
 
-$("#modelBtn").onclick = () => els.modelMenu.classList.toggle("hidden");
 $("#modelBtn").onclick = () => els.modelMenu.classList.toggle("hidden");
 els.modelMenu.querySelectorAll("[data-model]").forEach(btn => {
   btn.onclick = () => {

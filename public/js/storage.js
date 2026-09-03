@@ -13,7 +13,7 @@ const defaultState = () => ({
     theme: "system",
     voice: "off",
     context: "",
-    model: "gemini-2.5-flash"
+    model: "gemini-3.6-flash"
   }
 });
 

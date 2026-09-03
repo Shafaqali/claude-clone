@@ -14,7 +14,9 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
-const MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+const FALLBACK_MODELS = [MODEL, "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"]
+  .filter((model, index, models) => models.indexOf(model) === index);
 
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
@@ -31,17 +33,6 @@ const upload = multer({
 const client = process.env.GEMINI_API_KEY
   ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
   : null;
-
-// Validate API key format (Updated for new AQ. format support)
-if (process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.startsWith('AIza') && !process.env.GEMINI_API_KEY.startsWith('AQ.')) {
-  console.warn('⚠️  WARNING: API key format appears incorrect.');
-  console.warn('   Current key starts with:', process.env.GEMINI_API_KEY.substring(0, 10) + '...');
-  console.warn('   Accepted formats: AIza (old) or AQ. (new)');
-  console.warn('   Get a new key from: https://aistudio.google.com/');
-} else if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.startsWith('AQ.')) {
-  console.log('✅ Using NEW AQ. format key (Google\'s latest standard)');
-  console.log('   This is the correct format for 2026+');
-}
 
 function cleanHistory(messages = []) {
   return messages
@@ -86,26 +77,14 @@ app.get("/api/test-key", async (req, res) => {
     });
   }
   
-    // Check API key format (Updated for AQ. support)
-    if (!process.env.GEMINI_API_KEY.startsWith('AIza') && !process.env.GEMINI_API_KEY.startsWith('AQ.')) {
-      return res.json({ 
-        error: "❌ Invalid API key format", 
-        current: process.env.GEMINI_API_KEY.substring(0, 10) + '...',
-        expected: "Should start with 'AIza' or 'AQ.'",
-        solution: "Get new key from https://aistudio.google.com/app/apikey",
-        note: "Both AIza and AQ. formats are supported"
-      });
-    }
-  
   try {
-    const model = client.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = client.getGenerativeModel({ model: MODEL });
     const result = await model.generateContent("Say 'Hello, API key is working!'");
     const response = await result.response;
     res.json({ 
       success: true, 
       message: response.text(),
-      model: "gemini-1.5-flash",
-      keyFormat: "✅ Correct (starts with AIza)"
+      model: MODEL
     });
   } catch (error) {
     let errorMsg = "API key test failed";
@@ -119,7 +98,7 @@ app.get("/api/test-key", async (req, res) => {
       solution = "Get new API key from https://aistudio.google.com/";
     }
     
-    res.json({ 
+    res.status(error.message?.includes("suspended") ? 403 : 400).json({
       error: errorMsg,
       details: error.message,
       solution: solution
@@ -129,8 +108,10 @@ app.get("/api/test-key", async (req, res) => {
 
 app.get("/api/health", (req, res) => {
   const availableModels = [
-    { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", limits: "15 RPM, 1,500 RPD" },
-    { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", limits: "2 RPM, 50 RPD" }
+    { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash ⭐ (Latest)" },
+    { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
+    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+    { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite" }
   ];
 
   res.json({
@@ -143,24 +124,26 @@ app.get("/api/health", (req, res) => {
 
 app.get("/api/models", async (req, res) => {
   const fallbackModels = [
-    { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash" },
-    { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro" }
+    { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash ⭐ (Latest)" },
+    { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
+    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+    { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite" }
   ];
   
   if (!process.env.GEMINI_API_KEY) {
-    return res.json({ models: fallbackModels, defaultModel: "gemini-1.5-flash", live: false });
+    return res.json({ models: fallbackModels, defaultModel: MODEL, live: false });
   }
 
   try {
     // For now, just return the verified working models
     res.json({
       models: fallbackModels,
-      defaultModel: "gemini-1.5-flash",
+      defaultModel: MODEL,
       live: true
     });
   } catch (error) {
     console.error("Models API error:", error);
-    res.json({ models: fallbackModels, defaultModel: "gemini-1.5-flash", live: false });
+    res.json({ models: fallbackModels, defaultModel: MODEL, live: false });
   }
 });
 
@@ -191,7 +174,7 @@ app.post("/api/test-image", async (req, res) => {
     res.json({ 
       success: true, 
       description: response.text(),
-      model: DEFAULT_MODEL
+      model: MODEL
     });
   } catch (error) {
     console.error('Image test error:', error);
@@ -224,12 +207,8 @@ app.post("/api/chat", async (req, res) => {
   }
 
   // Try multiple model fallbacks if the selected model doesn't work
-  const modelFallbacks = [
-    selectedModel,
-    "gemini-1.5-flash",
-    "gemini-1.0-pro",
-    "gemini-pro"
-  ];
+  const modelFallbacks = [selectedModel, ...FALLBACK_MODELS]
+    .filter((model, index, models) => models.indexOf(model) === index);
 
   let lastError = null;
   
@@ -288,15 +267,15 @@ app.post("/api/chat", async (req, res) => {
       // Check for specific error types
       if (error.message?.includes('suspended') || error.message?.includes('CONSUMER_SUSPENDED')) {
         // API key suspended - show immediate error, don't try other models
-        return res.status(403).json({ 
-          error: "🚨 **API Key Suspended**\n\nYour Google API key has been suspended. Please:\n\n1. **Create a new API key** at https://aistudio.google.com/\n2. **Make sure it starts with 'AIza'**\n3. **Update your .env file**\n4. **Restart the server**\n\n⚠️ Current key format is invalid: API keys should start with 'AIza', not 'AQ.'"
+        return res.status(403).json({
+          error: "Gemini API key is suspended. Create a new key in Google AI Studio, update GEMINI_API_KEY in .env, and restart the server."
         });
       }
       
       if (error.message?.includes('403') || error.message?.includes('Forbidden')) {
         // Invalid API key format or no access
-        return res.status(403).json({ 
-          error: "🔑 **Invalid API Key**\n\nYour API key format is incorrect. Please:\n\n1. **Go to** https://aistudio.google.com/\n2. **Create new API key** (should start with 'AIza')\n3. **Replace in .env file**\n4. **Restart server**\n\n❌ Current format: AQ.xxx (may not work)\n✅ Preferred format: AIzaXXX (standard)"
+        return res.status(403).json({
+          error: "Gemini rejected this API key or project permission. Create or check the key in Google AI Studio, then restart the server."
         });
       }
       
