@@ -1,4 +1,4 @@
-const CACHE_NAME = 'claude-ai-v2';
+const CACHE_NAME = 'claude-ai-v3';
 const APP_SHELL = [
   '/',
   '/manifest.json',
@@ -10,8 +10,7 @@ const APP_SHELL = [
   '/js/tools.js',
   '/js/voice.js',
   '/js/markdown.js',
-  '/icon-192.png',
-  '/icon-512.png'
+  '/icon.png'
 ];
 
 // Install event
