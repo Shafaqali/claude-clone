@@ -1,5 +1,6 @@
-import { loadState, saveState, activeChat } from "./storage.js";
+import { loadState, saveState, activeChat, setStateScope } from "./storage.js";
 import { renderMarkdown } from "./markdown.js";
+import { hydrateIcons, icon } from "./icons.js";
 import {
   streamChat,
   uploadFile,
@@ -89,6 +90,11 @@ const els = {
 
 function current() {
   return activeChat(state);
+}
+
+function loadScopedState() {
+  state = loadState(currentUser?.id || null);
+  if (!state.activeChatId) state.activeChatId = state.chats[0].id;
 }
 
 function escapeHtml(value) {
@@ -340,7 +346,7 @@ function renderChatList() {
   filtered.forEach(chat => {
     const row = document.createElement("div");
     row.className = `chat-item ${chat.id === state.activeChatId ? "active" : ""}`;
-    row.innerHTML = `<span>-</span><span class="title"></span><button class="chat-delete" title="Delete chat">x</button>`;
+    row.innerHTML = `${icon("message", "chat-row-icon")}<span class="title"></span><button class="chat-delete" title="Delete chat" aria-label="Delete chat">${icon("x")}</button>`;
     row.querySelector(".title").textContent = chat.title;
     row.title = chat.title;
     row.addEventListener("click", event => {
@@ -386,7 +392,7 @@ function attachmentMarkup(attachment) {
 
   return `
     <div class="message-attachment">
-      <div class="file-chip">${attachment.type === "document" ? "Doc" : "File"}</div>
+      <div class="file-chip">${icon(attachment.type === "document" ? "fileText" : "file")}</div>
       <div>
         <strong>${attachment.type === "document" ? "Document" : "File"}</strong>
         <small>${escapeHtml(attachment.name)} - ${Math.round(attachment.size / 1024)} KB</small>
@@ -415,7 +421,7 @@ function renderMessages() {
     if (message.role === "assistant") {
       const actions = document.createElement("div");
       actions.className = "message-actions";
-      actions.innerHTML = `<button data-copy>Copy</button>${state.settings.voice === "on" ? "<button data-speak>Read aloud</button>" : ""}`;
+      actions.innerHTML = `<button data-copy>${icon("copy")}<span>Copy</span></button>${state.settings.voice === "on" ? `<button data-speak>${icon("volume")}<span>Read aloud</span></button>` : ""}`;
       actions.querySelector("[data-copy]").onclick = () => navigator.clipboard?.writeText(message.content);
       actions.querySelector("[data-speak]")?.addEventListener("click", () => speak(message.content));
       bubble.appendChild(actions);
@@ -430,7 +436,7 @@ function renderMessages() {
     });
 
     if (message.role === "assistant") {
-      article.innerHTML = `<div class="message-avatar">A</div>`;
+      article.innerHTML = `<div class="message-avatar">${icon("bot")}</div>`;
     }
     article.appendChild(bubble);
     els.messages.appendChild(article);
@@ -669,6 +675,8 @@ async function handleSignOut() {
     await signOut();
   } finally {
     currentUser = null;
+    setStateScope(null);
+    state = loadState(null);
     setAuthMode("signin");
     showAuth();
   }
@@ -676,6 +684,7 @@ async function handleSignOut() {
 
 async function enterApp() {
   showApp();
+  loadScopedState();
   updateProfile();
   await loadCloudState();
   renderAll();
@@ -807,7 +816,7 @@ async function handleFileSelected() {
   els.attachment.innerHTML = `
     <div class="attachment-row">
       <div><strong>Processing...</strong><small>${escapeHtml(file.name)}</small></div>
-      <button onclick="removeAttachment()" title="Remove file">x</button>
+      <button onclick="removeAttachment()" title="Remove file" aria-label="Remove file">${icon("x")}</button>
     </div>
   `;
 
@@ -820,7 +829,7 @@ async function handleFileSelected() {
         : "File ready";
     const preview = attachedContext.type === "image" && attachedContext.base64
       ? `<img src="data:${attachedContext.mimeType};base64,${attachedContext.base64}" alt="">`
-      : `<div class="file-chip">${attachedContext.type === "document" ? "Doc" : "File"}</div>`;
+      : `<div class="file-chip">${icon(attachedContext.type === "document" ? "fileText" : "file")}</div>`;
 
     els.attachment.innerHTML = `
       <div class="attachment-row">
@@ -828,7 +837,7 @@ async function handleFileSelected() {
           ${preview}
           <div><strong>${label}</strong><small>${escapeHtml(attachedContext.name)} - ${attachedContext.analysis}</small></div>
         </div>
-        <button onclick="removeAttachment()" title="Remove file">x</button>
+        <button onclick="removeAttachment()" title="Remove file" aria-label="Remove file">${icon("x")}</button>
       </div>
     `;
     autosize();
@@ -836,7 +845,7 @@ async function handleFileSelected() {
     els.attachment.innerHTML = `
       <div class="attachment-row error">
         <div><strong>Upload failed</strong><small>${escapeHtml(error.message)}</small></div>
-        <button onclick="removeAttachment()" title="Remove">x</button>
+        <button onclick="removeAttachment()" title="Remove" aria-label="Remove file">${icon("x")}</button>
       </div>
     `;
   }
@@ -857,6 +866,7 @@ function exportCurrentChat() {
 }
 
 async function bootstrap() {
+  hydrateIcons();
   bindEvents();
   setAuthMode("signin", "Checking session...");
   const recoveryFromUrl = isPasswordRecoveryUrl();
@@ -891,7 +901,7 @@ async function bootstrap() {
       if (currentUser) {
         await enterApp();
       } else if (authReady) {
-        state = loadState();
+        state = loadState(null);
         setAuthMode("signin");
         showAuth();
       }

@@ -259,7 +259,7 @@ app.put("/api/chats/:id", requireUser, async (req, res) => {
     const duplicateId = error.code === "23505";
     res.status(duplicateId ? 409 : 500).json({
       error: duplicateId
-        ? "A chat with this id already exists for another account."
+        ? "A chat with this id already exists."
         : "Could not save chat to Supabase.",
       details: error.message
     });

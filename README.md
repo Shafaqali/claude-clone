@@ -123,6 +123,8 @@ https://aistudio.google.com/app/apikey
 
 The `SUPABASE_PUBLISHABLE_KEY` is safe for the browser. The `SUPABASE_SECRET_KEY` must stay in `.env` or your hosting provider's server-side environment variables only.
 
+Chats are stored with a `(user_id, id)` primary key, so every user's conversations stay scoped to that Supabase account. Re-run `supabase/schema.sql` after pulling database-related updates.
+
 ## Run Locally
 
 Start the server:

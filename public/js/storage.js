@@ -1,4 +1,5 @@
-const KEY = "personal-agent-state-v1";
+const BASE_KEY = "personal-agent-state-v1";
+let activeKey = BASE_KEY;
 
 const defaultState = () => ({
   chats: [{
@@ -17,21 +18,42 @@ const defaultState = () => ({
   }
 });
 
-export function loadState() {
+function keyForUser(userId) {
+  return userId ? `${BASE_KEY}:user:${userId}` : BASE_KEY;
+}
+
+function normalizeState(parsed) {
+  const defaults = defaultState();
+  const state = {
+    ...defaults,
+    ...parsed,
+    settings: {
+      ...defaults.settings,
+      ...(parsed.settings || {})
+    }
+  };
+
+  if (!state.activeChatId || !state.chats.some(chat => chat.id === state.activeChatId)) {
+    state.activeChatId = state.chats[0].id;
+  }
+
+  return state;
+}
+
+export function setStateScope(userId = null) {
+  activeKey = keyForUser(userId);
+}
+
+export function loadState(userId) {
+  if (userId !== undefined) setStateScope(userId);
+
   try {
-    const parsed = JSON.parse(localStorage.getItem(KEY));
+    const parsed = JSON.parse(localStorage.getItem(activeKey));
     if (parsed?.chats?.length) {
-      const defaults = defaultState();
-      return {
-        ...defaults,
-        ...parsed,
-        settings: {
-          ...defaults.settings,
-          ...(parsed.settings || {})
-        }
-      };
+      return normalizeState(parsed);
     }
   } catch {}
+
   const state = defaultState();
   state.activeChatId = state.chats[0].id;
   saveState(state);
@@ -39,7 +61,7 @@ export function loadState() {
 }
 
 export function saveState(state) {
-  localStorage.setItem(KEY, JSON.stringify(state));
+  localStorage.setItem(activeKey, JSON.stringify(state));
 }
 
 export function activeChat(state) {

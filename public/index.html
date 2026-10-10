@@ -19,7 +19,7 @@
   <section class="auth-screen" id="authScreen">
     <form class="auth-panel" id="authForm">
       <div class="auth-brand">
-        <span class="brand-mark">A</span>
+        <span class="brand-mark" data-icon="sparkles"></span>
         <div>
           <h1 id="authTitle">Personal AI</h1>
           <p id="authSubtitle">Checking your session...</p>
@@ -57,18 +57,18 @@
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-top">
         <button class="brand" id="brandButton" aria-label="Toggle sidebar" title="Toggle sidebar">
-          <span class="brand-mark">A</span>
+          <span class="brand-mark" data-icon="sparkles"></span>
           <span>Personal AI</span>
         </button>
-        <button class="icon-btn mobile-only" id="closeSidebar" aria-label="Close sidebar">x</button>
+        <button class="icon-btn mobile-only" id="closeSidebar" aria-label="Close sidebar"><span data-icon="x"></span></button>
       </div>
 
       <button class="new-chat-btn" id="newChatBtn" title="New chat">
-        <span>+</span><span>New chat</span><kbd>Ctrl K</kbd>
+        <span data-icon="plus"></span><span>New chat</span><kbd>Ctrl K</kbd>
       </button>
 
       <div class="search-wrap">
-        <span>Search</span>
+        <span data-icon="search"></span>
         <input id="searchChats" placeholder="Search chats" autocomplete="off">
       </div>
 
@@ -76,11 +76,11 @@
       <div class="chat-list" id="chatList"></div>
 
       <div class="sidebar-bottom">
-        <button class="side-action" id="themeBtn" title="Appearance"><span>*</span><span>Appearance</span></button>
-        <button class="side-action" id="settingsBtn" title="Settings"><span>#</span><span>Settings</span></button>
-        <button class="side-action hidden" id="signOutBtn" title="Sign out"><span>-</span><span>Sign out</span></button>
+        <button class="side-action" id="themeBtn" title="Appearance"><span data-icon="moon"></span><span>Appearance</span></button>
+        <button class="side-action" id="settingsBtn" title="Settings"><span data-icon="settings"></span><span>Settings</span></button>
+        <button class="side-action hidden" id="signOutBtn" title="Sign out"><span data-icon="logOut"></span><span>Sign out</span></button>
         <div class="profile">
-          <div class="avatar">U</div>
+          <div class="avatar" data-icon="user"></div>
           <div><strong id="profileName">Personal Agent</strong><small id="profileEmail">Local workspace</small></div>
           <span class="status-dot"></span>
         </div>
@@ -89,12 +89,12 @@
 
     <main class="main">
       <header class="topbar">
-        <button class="icon-btn" id="openSidebar" aria-label="Open sidebar">=</button>
+        <button class="icon-btn" id="openSidebar" aria-label="Open sidebar"><span data-icon="panelLeft"></span></button>
         <div class="model-picker">
           <button id="modelBtn" class="model-btn">
             <span class="model-dot"></span>
             <span id="modelName">Gemini</span>
-            <span class="chevron">v</span>
+            <span class="chevron" data-icon="chevronDown"></span>
           </button>
           <div class="model-menu hidden" id="modelMenu">
             <button data-model="gemini-3.6-flash">Gemini 3.6 Flash <small>Default</small></button>
@@ -104,14 +104,14 @@
           </div>
         </div>
         <div class="topbar-actions">
-          <button class="icon-btn" id="exportBtn" title="Export">DL</button>
-          <button class="icon-btn" id="settingsTopBtn" title="Settings">#</button>
+          <button class="icon-btn" id="exportBtn" title="Export" aria-label="Export chat"><span data-icon="download"></span></button>
+          <button class="icon-btn" id="settingsTopBtn" title="Settings" aria-label="Settings"><span data-icon="settings"></span></button>
         </div>
       </header>
 
       <section class="chat-view" id="chatView">
         <div class="welcome" id="welcome">
-          <div class="welcome-orb">A</div>
+          <div class="welcome-orb" data-icon="sparkles"></div>
           <h1>How can I help?</h1>
           <p>Your personal AI workspace for writing, coding, research, and everyday tasks.</p>
           <div class="suggestions">
@@ -131,14 +131,14 @@
           <div class="composer-toolbar">
             <div class="composer-left">
               <input type="file" id="fileInput" hidden accept=".txt,.md,.json,.csv,.js,.jsx,.ts,.tsx,.html,.css,.xml,.yaml,.yml,.sql,.py,.php,.java,.c,.cpp,.h,.env,.log,.ini,.cfg,.conf,.sh,.bat,.ps1,.dockerfile,.gitignore,.readme,.jpg,.jpeg,.png,.gif,.bmp,.webp,.svg,.tiff,.pdf,.doc,.docx,.rtf,.odt,.xlsx,.xls,.tsv">
-              <button class="tool-btn" id="attachBtn" title="Attach file">+</button>
-              <button class="tool-btn" id="voiceBtn" title="Voice input">Mic</button>
-              <button class="tool-btn" id="toolBtn" title="Tools">*</button>
+              <button class="tool-btn" id="attachBtn" title="Attach file" aria-label="Attach file"><span data-icon="paperclip"></span></button>
+              <button class="tool-btn" id="voiceBtn" title="Voice input" aria-label="Voice input"><span data-icon="mic"></span></button>
+              <button class="tool-btn" id="toolBtn" title="Tools" aria-label="Tools"><span data-icon="wrench"></span></button>
             </div>
             <div class="composer-right">
               <span class="shortcut-hint">Enter to send - Shift+Enter for newline</span>
-              <button class="send-btn" id="sendBtn" disabled aria-label="Send">Up</button>
-              <button class="stop-btn hidden" id="stopBtn" aria-label="Stop">Stop</button>
+              <button class="send-btn" id="sendBtn" disabled aria-label="Send"><span data-icon="arrowUp"></span></button>
+              <button class="stop-btn hidden" id="stopBtn" aria-label="Stop"><span data-icon="square"></span></button>
             </div>
           </div>
         </div>
@@ -152,7 +152,7 @@
   <dialog class="settings-dialog" id="settingsDialog">
     <div class="dialog-head">
       <div><h2>Settings</h2><p>Customize your personal agent.</p></div>
-      <button class="icon-btn" id="closeSettings">x</button>
+      <button class="icon-btn" id="closeSettings" aria-label="Close settings"><span data-icon="x"></span></button>
     </div>
     <div class="settings-body">
       <label>Appearance
@@ -170,8 +170,8 @@
   </dialog>
 
   <div class="tool-popover hidden" id="toolPopover">
-    <button data-tool="calculator">Calculator</button>
-    <button data-tool="time">Current time</button>
+    <button data-tool="calculator"><span data-icon="calculator"></span><span>Calculator</span></button>
+    <button data-tool="time"><span data-icon="clock"></span><span>Current time</span></button>
   </div>
 
   <script type="module" src="/js/app.js"></script>
