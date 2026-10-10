@@ -874,6 +874,12 @@ async function bootstrap() {
     databaseReady = false;
   }
 
+  if (!authReady) {
+    setAuthMode("signin", "Supabase is not configured. Add .env values and restart the server.", "error");
+    showAuth();
+    return;
+  }
+
   await enterApp();
   checkHealth().then(data => console.log("API:", data)).catch(() => {});
 }
