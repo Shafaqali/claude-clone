@@ -3,43 +3,60 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  
-  <!-- PWA Manifest -->
   <link rel="manifest" href="/manifest.json">
-  
-  <!-- PWA Icons -->
   <link rel="icon" type="image/png" sizes="1254x1254" href="/icon.png">
   <link rel="apple-touch-icon" href="/icon.png">
-  
-  <!-- PWA Theme -->
   <meta name="theme-color" content="#ff6b35">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Claude AI">
+  <meta name="apple-mobile-web-app-title" content="Personal AI">
   <meta name="msapplication-TileColor" content="#1a1a1a">
-  <meta name="msapplication-TileImage" content="/icon-144.png">
-  
-  <title>Claude AI Agent</title>
+  <title>Personal AI Agent</title>
   <link rel="stylesheet" href="/css/themes.css">
   <link rel="stylesheet" href="/css/styles.css">
 </head>
 <body>
-  <div class="app-shell">
+  <section class="auth-screen hidden" id="authScreen">
+    <form class="auth-panel" id="authForm">
+      <div class="auth-brand">
+        <span class="brand-mark">A</span>
+        <div>
+          <h1>Personal AI</h1>
+          <p>Sign in to sync conversations across devices.</p>
+        </div>
+      </div>
+
+      <label>Email
+        <input id="authEmail" type="email" autocomplete="email" required>
+      </label>
+      <label>Password
+        <input id="authPassword" type="password" autocomplete="current-password" minlength="6" required>
+      </label>
+
+      <div class="auth-actions">
+        <button class="primary-btn" type="submit" id="signInBtn">Sign in</button>
+        <button class="secondary-btn" type="button" id="signUpBtn">Create account</button>
+      </div>
+      <p class="auth-message" id="authMessage"></p>
+    </form>
+  </section>
+
+  <div class="app-shell" id="appShell">
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-top">
         <button class="brand" id="brandButton" aria-label="Toggle sidebar" title="Toggle sidebar">
           <span class="brand-mark">A</span>
           <span>Personal AI</span>
         </button>
-        <button class="icon-btn mobile-only" id="closeSidebar" aria-label="Close sidebar">×</button>
+        <button class="icon-btn mobile-only" id="closeSidebar" aria-label="Close sidebar">x</button>
       </div>
 
       <button class="new-chat-btn" id="newChatBtn" title="New chat">
-        <span>＋</span><span>New chat</span><kbd>Ctrl K</kbd>
+        <span>+</span><span>New chat</span><kbd>Ctrl K</kbd>
       </button>
 
       <div class="search-wrap">
-        <span>⌕</span>
+        <span>Search</span>
         <input id="searchChats" placeholder="Search chats" autocomplete="off">
       </div>
 
@@ -47,11 +64,12 @@
       <div class="chat-list" id="chatList"></div>
 
       <div class="sidebar-bottom">
-        <button class="side-action" id="themeBtn" title="Appearance"><span>◐</span><span>Appearance</span></button>
-        <button class="side-action" id="settingsBtn" title="Settings"><span>⚙</span><span>Settings</span></button>
+        <button class="side-action" id="themeBtn" title="Appearance"><span>*</span><span>Appearance</span></button>
+        <button class="side-action" id="settingsBtn" title="Settings"><span>#</span><span>Settings</span></button>
+        <button class="side-action hidden" id="signOutBtn" title="Sign out"><span>-</span><span>Sign out</span></button>
         <div class="profile">
           <div class="avatar">U</div>
-          <div><strong>Personal Agent</strong><small>Local workspace</small></div>
+          <div><strong id="profileName">Personal Agent</strong><small id="profileEmail">Local workspace</small></div>
           <span class="status-dot"></span>
         </div>
       </div>
@@ -59,21 +77,23 @@
 
     <main class="main">
       <header class="topbar">
-        <button class="icon-btn" id="openSidebar" aria-label="Open sidebar">☰</button>
+        <button class="icon-btn" id="openSidebar" aria-label="Open sidebar">=</button>
         <div class="model-picker">
           <button id="modelBtn" class="model-btn">
             <span class="model-dot"></span>
             <span id="modelName">Gemini</span>
-            <span class="chevron">⌄</span>
+            <span class="chevron">v</span>
           </button>
           <div class="model-menu hidden" id="modelMenu">
-            <button data-model="gemini-1.5-flash">Gemini 1.5 Flash <small>Fast & Free</small></button>
-            <button data-model="gemini-1.5-pro">Gemini 1.5 Pro <small>Advanced</small></button>
+            <button data-model="gemini-3.6-flash">Gemini 3.6 Flash <small>Default</small></button>
+            <button data-model="gemini-3.5-flash">Gemini 3.5 Flash <small>Fast</small></button>
+            <button data-model="gemini-2.5-flash">Gemini 2.5 Flash <small>Balanced</small></button>
+            <button data-model="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite <small>Lightweight</small></button>
           </div>
         </div>
         <div class="topbar-actions">
-          <button class="icon-btn" id="exportBtn" title="Export">⇩</button>
-          <button class="icon-btn" id="settingsTopBtn" title="Settings">⚙</button>
+          <button class="icon-btn" id="exportBtn" title="Export">DL</button>
+          <button class="icon-btn" id="settingsTopBtn" title="Settings">#</button>
         </div>
       </header>
 
@@ -99,14 +119,14 @@
           <div class="composer-toolbar">
             <div class="composer-left">
               <input type="file" id="fileInput" hidden accept=".txt,.md,.json,.csv,.js,.jsx,.ts,.tsx,.html,.css,.xml,.yaml,.yml,.sql,.py,.php,.java,.c,.cpp,.h,.env,.log,.ini,.cfg,.conf,.sh,.bat,.ps1,.dockerfile,.gitignore,.readme,.jpg,.jpeg,.png,.gif,.bmp,.webp,.svg,.tiff,.pdf,.doc,.docx,.rtf,.odt,.xlsx,.xls,.tsv">
-              <button class="tool-btn" id="attachBtn" title="Attach file">＋</button>
-              <button class="tool-btn" id="voiceBtn" title="Voice input">◉</button>
-              <button class="tool-btn" id="toolBtn" title="Tools">✦</button>
+              <button class="tool-btn" id="attachBtn" title="Attach file">+</button>
+              <button class="tool-btn" id="voiceBtn" title="Voice input">Mic</button>
+              <button class="tool-btn" id="toolBtn" title="Tools">*</button>
             </div>
             <div class="composer-right">
-              <span class="shortcut-hint">Enter to send · Shift+Enter for newline</span>
-              <button class="send-btn" id="sendBtn" disabled aria-label="Send">↑</button>
-              <button class="stop-btn hidden" id="stopBtn" aria-label="Stop">■</button>
+              <span class="shortcut-hint">Enter to send - Shift+Enter for newline</span>
+              <button class="send-btn" id="sendBtn" disabled aria-label="Send">Up</button>
+              <button class="stop-btn hidden" id="stopBtn" aria-label="Stop">Stop</button>
             </div>
           </div>
         </div>
@@ -120,7 +140,7 @@
   <dialog class="settings-dialog" id="settingsDialog">
     <div class="dialog-head">
       <div><h2>Settings</h2><p>Customize your personal agent.</p></div>
-      <button class="icon-btn" id="closeSettings">×</button>
+      <button class="icon-btn" id="closeSettings">x</button>
     </div>
     <div class="settings-body">
       <label>Appearance
@@ -132,7 +152,7 @@
       <label>Personal instructions
         <textarea id="systemContext" rows="5" placeholder="Example: Prefer concise answers and practical code."></textarea>
       </label>
-      <div class="api-status" id="apiStatus">Checking API configuration…</div>
+      <div class="api-status" id="apiStatus">Checking API configuration...</div>
       <button class="primary-btn" id="saveSettings">Save settings</button>
     </div>
   </dialog>
@@ -143,18 +163,12 @@
   </div>
 
   <script type="module" src="/js/app.js"></script>
-  
-  <!-- PWA Service Worker -->
   <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js')
-          .then((registration) => {
-            console.log('SW registered: ', registration);
-          })
-          .catch((registrationError) => {
-            console.log('SW registration failed: ', registrationError);
-          });
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/sw.js")
+          .then(registration => console.log("SW registered: ", registration))
+          .catch(error => console.log("SW registration failed: ", error));
       });
     }
   </script>

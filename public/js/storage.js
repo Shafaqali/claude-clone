@@ -20,7 +20,17 @@ const defaultState = () => ({
 export function loadState() {
   try {
     const parsed = JSON.parse(localStorage.getItem(KEY));
-    if (parsed?.chats?.length) return parsed;
+    if (parsed?.chats?.length) {
+      const defaults = defaultState();
+      return {
+        ...defaults,
+        ...parsed,
+        settings: {
+          ...defaults.settings,
+          ...(parsed.settings || {})
+        }
+      };
+    }
   } catch {}
   const state = defaultState();
   state.activeChatId = state.chats[0].id;

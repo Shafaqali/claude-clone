@@ -10,6 +10,18 @@ button{cursor:pointer;color:inherit}
 
 .model-menu{max-height:min(70vh,520px);overflow-y:auto;width:240px!important}
 
+.auth-screen{min-height:100%;display:grid;place-items:center;padding:24px;background:var(--bg)}
+.auth-panel{width:min(420px,100%);display:grid;gap:16px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;box-shadow:var(--shadow)}
+.auth-brand{display:flex;align-items:center;gap:12px;margin-bottom:4px}
+.auth-brand h1{font-family:var(--font-display);font-size:24px;line-height:1.1;margin:0}
+.auth-brand p{margin:4px 0 0;color:var(--muted);font-size:13px}
+.auth-panel label{display:grid;gap:7px;font-size:12px;font-weight:700}
+.auth-panel input{border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text);padding:11px 12px;outline:0}
+.auth-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.secondary-btn{border:1px solid var(--border);border-radius:9px;background:var(--surface-2);color:var(--text);padding:11px;font-weight:700}
+.secondary-btn:hover{border-color:var(--accent)}
+.auth-message{min-height:18px;margin:0;color:var(--muted);font-size:12px;line-height:1.45}
+
 /* ---------- shell ---------- */
 .app-shell{height:100%;display:flex;overflow:hidden}
 
@@ -56,7 +68,7 @@ button{cursor:pointer;color:inherit}
 .profile small{font-size:10px;color:var(--muted);display:block}
 .status-dot{margin-left:auto;width:7px;height:7px;border-radius:50%;background:#5c9a6e}
 
-/* collapsed desktop sidebar — icon rail */
+/* collapsed desktop sidebar icon rail */
 .sidebar.collapsed{width:60px;padding:16px 8px}
 .sidebar.collapsed .brand span:last-child,
 .sidebar.collapsed .new-chat-btn span:not(:first-child),
@@ -74,7 +86,7 @@ button{cursor:pointer;color:inherit}
 
 .main{min-width:0;flex:1;display:flex;flex-direction:column;background:var(--bg)}
 .topbar{height:56px;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;position:relative;gap:2px}
-.icon-btn{border:0;background:transparent;width:34px;height:34px;border-radius:8px;font-size:17px;display:grid;place-items:center;color:var(--text)}
+.icon-btn{border:0;background:transparent;min-width:34px;height:34px;border-radius:8px;font-size:13px;display:grid;place-items:center;color:var(--text);padding:0 8px}
 .icon-btn:hover{background:var(--surface-2)}
 .model-picker{position:relative;margin-left:6px}
 .model-btn{border:0;background:transparent;display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;font-weight:600;font-size:13.5px}
@@ -110,6 +122,11 @@ button{cursor:pointer;color:inherit}
 .message-content p:last-child{margin-bottom:0}
 .message-content ul,.message-content ol{padding-left:22px}
 .message-content blockquote{border-left:3px solid var(--accent);margin:12px 0;padding:2px 14px;color:var(--muted)}
+.message-attachment{margin:0 0 12px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);display:flex;align-items:center;gap:10px}
+.message-attachment img{width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--border)}
+.message-attachment strong{display:block;font-size:12px}
+.message-attachment small{display:block;color:var(--muted);font-size:11px;word-break:break-word}
+.file-chip{width:38px;height:38px;border-radius:7px;background:var(--accent);color:var(--accent-text);display:grid;place-items:center;font-size:11px;font-weight:700;flex-shrink:0}
 
 .code-wrap{margin:14px 0;border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--code)}
 .code-head{height:32px;background:rgba(255,255,255,.05);display:flex;align-items:center;padding:0 10px;color:#a9a69c;font-size:11px}
@@ -136,11 +153,11 @@ button{cursor:pointer;color:inherit}
 .composer-wrap textarea{width:100%;resize:none;border:0;outline:0;background:transparent;color:var(--text);padding:14px 16px 6px;max-height:180px;line-height:1.45;font-size:14.5px}
 .composer-toolbar{display:flex;align-items:center;padding:4px 8px 8px}
 .composer-left,.composer-right{display:flex;align-items:center}
-.tool-btn{border:0;background:transparent;color:var(--muted);width:30px;height:30px;border-radius:7px;font-size:15px}
+.tool-btn{border:0;background:transparent;color:var(--muted);min-width:34px;height:30px;border-radius:7px;font-size:12px;padding:0 7px}
 .tool-btn:hover{background:var(--surface-2);color:var(--text)}
 .composer-right{margin-left:auto;gap:6px}
 .shortcut-hint{font-size:10px;color:var(--muted)}
-.send-btn,.stop-btn{width:30px;height:30px;border:0;border-radius:9px;background:var(--accent);color:var(--accent-text);font-weight:700;transition:opacity .15s,transform .1s}
+.send-btn,.stop-btn{min-width:42px;height:30px;border:0;border-radius:9px;background:var(--accent);color:var(--accent-text);font-size:12px;font-weight:700;transition:opacity .15s,transform .1s;padding:0 8px}
 .send-btn:disabled{opacity:.4;cursor:default}
 .send-btn:not(:disabled):hover{transform:scale(1.05)}
 .stop-btn{background:var(--text);color:var(--surface)}
@@ -150,6 +167,13 @@ button{cursor:pointer;color:inherit}
 .attachment-preview strong{color:var(--text)}
 .attachment-preview .remove-btn{background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;padding:2px 4px;border-radius:3px;margin-left:8px}
 .attachment-preview .remove-btn:hover{background:var(--surface-2);color:var(--text)}
+.attachment-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.attachment-row button{border:0;background:transparent;color:var(--muted);border-radius:6px;padding:4px 7px}
+.attachment-row button:hover{background:var(--surface-2);color:var(--text)}
+.attachment-row small{display:block;color:var(--muted);font-size:11px;word-break:break-word}
+.attachment-main{display:flex;align-items:center;gap:10px;min-width:0}
+.attachment-main img{width:40px;height:40px;border-radius:6px;object-fit:cover;border:1px solid var(--border)}
+.attachment-row.error strong{color:var(--danger)}
 
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:30}
 .settings-dialog{border:1px solid var(--border);border-radius:16px;padding:0;background:var(--surface);color:var(--text);width:min(480px,calc(100vw - 30px));box-shadow:var(--shadow)}
@@ -167,6 +191,7 @@ button{cursor:pointer;color:inherit}
 .mobile-only{display:none}
 
 @media(max-width:800px){
+  .auth-actions{grid-template-columns:1fr}
   .sidebar{position:fixed;z-index:40;inset:0 auto 0 0;transform:translateX(-100%);transition:transform .22s;width:min(300px,88vw);box-shadow:var(--shadow)}
   .sidebar.open{transform:none}
   .sidebar.collapsed{width:min(300px,88vw);padding:16px 12px}

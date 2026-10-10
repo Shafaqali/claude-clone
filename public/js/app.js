@@ -1,95 +1,191 @@
 import { loadState, saveState, activeChat } from "./storage.js";
-import { renderMarkdown, plainText } from "./markdown.js";
-import { streamChat, uploadFile, checkHealth } from "./api.js";
+import { renderMarkdown } from "./markdown.js";
+import {
+  streamChat,
+  uploadFile,
+  checkHealth,
+  fetchCloudChats,
+  saveCloudChat,
+  deleteCloudChat
+} from "./api.js";
+import {
+  initAuth,
+  isAuthConfigured,
+  isDatabaseConfigured,
+  onAuthChange,
+  signIn,
+  signUp,
+  signOut,
+  authHeaders
+} from "./auth.js";
 import { startListening, speak } from "./voice.js";
 import { runTool } from "./tools.js";
 
-// Available Gemini models with proper names
 const availableModels = [
-  { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", description: "Fast & Free" },
-  { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", description: "Advanced" }
+  { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash" },
+  { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
+  { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+  { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite" }
 ];
 
-const $ = s => document.querySelector(s);
-const state = loadState();
+const $ = selector => document.querySelector(selector);
+let state = loadState();
 if (!state.activeChatId) state.activeChatId = state.chats[0].id;
 
 let controller = null;
 let attachedContext = null;
+let currentUser = null;
+let authReady = false;
+let databaseReady = false;
+const saveTimers = new Map();
 
 const els = {
-  sidebar: $("#sidebar"), overlay: $("#overlay"), chatList: $("#chatList"),
-  messages: $("#messages"), welcome: $("#welcome"), composer: $("#composer"),
-  send: $("#sendBtn"), stop: $("#stopBtn"), attachment: $("#attachmentPreview"),
-  file: $("#fileInput"), settings: $("#settingsDialog"), modelMenu: $("#modelMenu"),
-  modelName: $("#modelName"), toolPopover: $("#toolPopover"), brand: $("#brandButton")
+  appShell: $("#appShell"),
+  authScreen: $("#authScreen"),
+  authForm: $("#authForm"),
+  authEmail: $("#authEmail"),
+  authPassword: $("#authPassword"),
+  authMessage: $("#authMessage"),
+  signUp: $("#signUpBtn"),
+  signOut: $("#signOutBtn"),
+  profileName: $("#profileName"),
+  profileEmail: $("#profileEmail"),
+  sidebar: $("#sidebar"),
+  overlay: $("#overlay"),
+  chatList: $("#chatList"),
+  messages: $("#messages"),
+  welcome: $("#welcome"),
+  composer: $("#composer"),
+  send: $("#sendBtn"),
+  stop: $("#stopBtn"),
+  attachment: $("#attachmentPreview"),
+  file: $("#fileInput"),
+  settings: $("#settingsDialog"),
+  modelMenu: $("#modelMenu"),
+  modelName: $("#modelName"),
+  toolPopover: $("#toolPopover"),
+  brand: $("#brandButton")
 };
 
-function current() { return activeChat(state); }
+function current() {
+  return activeChat(state);
+}
 
-function save() {
-  state.chats.forEach(c => c.updatedAt = c.id === state.activeChatId ? Date.now() : c.updatedAt);
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, c => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;"
+  }[c]));
+}
+
+function cleanChatForCloud(chat) {
+  return {
+    id: chat.id,
+    title: chat.title,
+    messages: chat.messages.map(message => {
+      const clean = {
+        role: message.role,
+        content: message.content
+      };
+
+      if (message.attachment) {
+        clean.attachment = {
+          ...message.attachment,
+          base64: typeof message.attachment.base64 === "string" && message.attachment.base64.length <= 2000000
+            ? message.attachment.base64
+            : null
+        };
+      }
+
+      return clean;
+    })
+  };
+}
+
+async function cloudHeaders() {
+  if (!authReady || !databaseReady || !currentUser) return null;
+  return authHeaders();
+}
+
+function queueCloudSave(chat) {
+  if (!authReady || !databaseReady || !currentUser || !chat?.id) return;
+  clearTimeout(saveTimers.get(chat.id));
+  saveTimers.set(chat.id, setTimeout(async () => {
+    try {
+      const headers = await cloudHeaders();
+      if (headers) await saveCloudChat(cleanChatForCloud(chat), headers);
+    } catch (error) {
+      console.warn("Cloud save failed:", error.message);
+    } finally {
+      saveTimers.delete(chat.id);
+    }
+  }, 500));
+}
+
+function save({ sync = true } = {}) {
+  state.chats.forEach(chat => {
+    if (chat.id === state.activeChatId) chat.updatedAt = Date.now();
+  });
   saveState(state);
+  if (sync) queueCloudSave(current());
 }
 
-function removeAttachment() {
-  attachedContext = null;
-  els.attachment.classList.add("hidden");
-  els.attachment.innerHTML = "";
-  els.file.value = ""; // Clear the file input
-  
-  // Show a brief notification
-  const notification = document.createElement('div');
-  notification.textContent = 'File removed';
-  notification.style.cssText = `
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    padding: 8px 16px;
-    border-radius: 6px;
-    font-size: 12px;
-    color: var(--text);
-    z-index: 1000;
-    animation: fadeIn 0.2s ease;
-  `;
-  document.body.appendChild(notification);
-  setTimeout(() => {
-    notification.style.opacity = '0';
-    setTimeout(() => notification.remove(), 200);
-  }, 1500);
-}
-
-// Make removeAttachment available globally
-window.removeAttachment = removeAttachment;
-
-// Test function for debugging image uploads
-window.testImageUpload = async function(file) {
+async function syncAllChatsToCloud() {
+  if (!authReady || !databaseReady || !currentUser) return;
   try {
-    console.log('Testing image upload:', file.name);
-    const result = await uploadFile(file);
-    console.log('Upload result:', result);
-    
-    if (result.type === 'image' && result.base64) {
-      console.log('Testing Gemini image analysis...');
-      const response = await fetch('/api/test-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          base64: result.base64,
-          mimeType: result.mimeType
-        })
-      });
-      
-      const testResult = await response.json();
-      console.log('Gemini test result:', testResult);
-      return testResult;
+    const headers = await cloudHeaders();
+    if (!headers) return;
+    await Promise.all(state.chats.map(chat => saveCloudChat(cleanChatForCloud(chat), headers)));
+  } catch (error) {
+    console.warn("Initial cloud sync failed:", error.message);
+  }
+}
+
+async function loadCloudState() {
+  if (!authReady || !databaseReady || !currentUser) return;
+
+  try {
+    const headers = await cloudHeaders();
+    const cloudChats = await fetchCloudChats(headers);
+
+    if (cloudChats.length) {
+      state.chats = cloudChats;
+      state.activeChatId = cloudChats.some(chat => chat.id === state.activeChatId)
+        ? state.activeChatId
+        : cloudChats[0].id;
+      saveState(state);
+    } else if (state.chats.some(chat => chat.messages.length > 0)) {
+      await syncAllChatsToCloud();
     }
   } catch (error) {
-    console.error('Test failed:', error);
+    console.warn("Cloud load failed:", error.message);
   }
-};
+}
+
+function showAuth(message = "") {
+  els.authScreen.classList.remove("hidden");
+  els.appShell.classList.add("hidden");
+  els.authMessage.textContent = message;
+}
+
+function showApp() {
+  els.authScreen.classList.add("hidden");
+  els.appShell.classList.remove("hidden");
+}
+
+function updateProfile() {
+  const email = currentUser?.email || "";
+  els.signOut.classList.toggle("hidden", !currentUser);
+  els.profileName.textContent = currentUser ? "Signed in" : "Personal Agent";
+  els.profileEmail.textContent = currentUser
+    ? email
+    : authReady
+      ? "Sign in to sync"
+      : "Local workspace";
+}
 
 function applyTheme() {
   const theme = state.settings.theme || "system";
@@ -102,8 +198,8 @@ function renderChatList() {
   const query = $("#searchChats").value.toLowerCase();
   els.chatList.innerHTML = "";
   const filtered = state.chats
-    .filter(c => c.title.toLowerCase().includes(query))
-    .sort((a,b) => b.updatedAt - a.updatedAt);
+    .filter(chat => chat.title.toLowerCase().includes(query))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 
   if (filtered.length === 0) {
     const empty = document.createElement("div");
@@ -114,24 +210,61 @@ function renderChatList() {
   }
 
   filtered.forEach(chat => {
-      const row = document.createElement("div");
-      row.className = `chat-item ${chat.id === state.activeChatId ? "active" : ""}`;
-      row.innerHTML = `<span>◦</span><span class="title"></span><button class="chat-delete" title="Delete chat">×</button>`;
-      row.querySelector(".title").textContent = chat.title;
-      row.title = chat.title;
-      row.addEventListener("click", e => {
-        if (e.target.closest(".chat-delete")) return;
-        state.activeChatId = chat.id; save(); renderAll(); closeMobile();
-      });
-      row.querySelector(".chat-delete").addEventListener("click", e => {
-        e.stopPropagation();
-        if (state.chats.length === 1) return;
-        state.chats = state.chats.filter(c => c.id !== chat.id);
-        if (state.activeChatId === chat.id) state.activeChatId = state.chats[0].id;
-        save(); renderAll();
-      });
-      els.chatList.appendChild(row);
+    const row = document.createElement("div");
+    row.className = `chat-item ${chat.id === state.activeChatId ? "active" : ""}`;
+    row.innerHTML = `<span>-</span><span class="title"></span><button class="chat-delete" title="Delete chat">x</button>`;
+    row.querySelector(".title").textContent = chat.title;
+    row.title = chat.title;
+    row.addEventListener("click", event => {
+      if (event.target.closest(".chat-delete")) return;
+      state.activeChatId = chat.id;
+      save({ sync: false });
+      renderAll();
+      closeMobile();
     });
+    row.querySelector(".chat-delete").addEventListener("click", async event => {
+      event.stopPropagation();
+      if (state.chats.length === 1) return;
+      state.chats = state.chats.filter(item => item.id !== chat.id);
+      if (state.activeChatId === chat.id) state.activeChatId = state.chats[0].id;
+      save({ sync: false });
+      renderAll();
+
+      try {
+        const headers = await cloudHeaders();
+        if (headers) await deleteCloudChat(chat.id, headers);
+      } catch (error) {
+        console.warn("Cloud delete failed:", error.message);
+      }
+    });
+    els.chatList.appendChild(row);
+  });
+}
+
+function attachmentMarkup(attachment) {
+  if (!attachment) return "";
+
+  if (attachment.type === "image" && attachment.base64) {
+    return `
+      <div class="message-attachment">
+        <img src="data:${attachment.mimeType};base64,${attachment.base64}" alt="">
+        <div>
+          <strong>Image</strong>
+          <small>${escapeHtml(attachment.name)} - ${Math.round(attachment.size / 1024)} KB</small>
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="message-attachment">
+      <div class="file-chip">${attachment.type === "document" ? "Doc" : "File"}</div>
+      <div>
+        <strong>${attachment.type === "document" ? "Document" : "File"}</strong>
+        <small>${escapeHtml(attachment.name)} - ${Math.round(attachment.size / 1024)} KB</small>
+      </div>
+    </div>
+  `;
 }
 
 function renderMessages() {
@@ -139,68 +272,17 @@ function renderMessages() {
   els.messages.innerHTML = "";
   els.welcome.classList.toggle("hidden", chat.messages.length > 0);
 
-  chat.messages.forEach((message, index) => {
+  chat.messages.forEach(message => {
     const article = document.createElement("article");
     article.className = `message ${message.role}`;
-    
-    // Add avatar for assistant messages
-    if (message.role === "assistant") {
-      const avatar = document.createElement("div");
-      avatar.className = "message-avatar";
-      avatar.textContent = "AI";
-      article.appendChild(avatar);
-    }
-    
+
     const bubble = document.createElement("div");
     bubble.className = "bubble message-content";
-    
-    // Show attachment info if present
-    let attachmentHtml = "";
-    if (message.attachment) {
-      const att = message.attachment;
-      if (att.type === "image" && att.base64) {
-        attachmentHtml = `
-          <div style="margin-bottom: 12px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);">
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-              <img src="data:${att.mimeType};base64,${att.base64}" 
-                   style="width: 60px; height: 60px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border);">
-              <div>
-                <div style="font-weight: 600; font-size: 12px;">📷 ${escapeHtml(att.name)}</div>
-                <div style="font-size: 11px; color: var(--muted);">${Math.round(att.size/1024)}KB image</div>
-              </div>
-            </div>
-          </div>
-        `;
-      } else if (att.type === "text") {
-        attachmentHtml = `
-          <div style="margin-bottom: 12px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <div style="width: 24px; height: 24px; background: var(--accent); border-radius: 4px; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px;">📄</div>
-              <div>
-                <div style="font-weight: 600; font-size: 12px;">${escapeHtml(att.name)}</div>
-                <div style="font-size: 11px; color: var(--muted);">${Math.round(att.size/1024)}KB text file</div>
-              </div>
-            </div>
-          </div>
-        `;
-      } else if (att.type === "document") {
-        attachmentHtml = `
-          <div style="margin-bottom: 12px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2);">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <div style="width: 24px; height: 24px; background: var(--accent); border-radius: 4px; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px;">📋</div>
-              <div>
-                <div style="font-weight: 600; font-size: 12px;">${escapeHtml(att.name)}</div>
-                <div style="font-size: 11px; color: var(--muted);">${Math.round(att.size/1024)}KB document</div>
-              </div>
-            </div>
-          </div>
-        `;
-      }
-    }
-    
-    bubble.innerHTML = attachmentHtml + (message.role === "assistant"
-      ? renderMarkdown(message.content)
-      : `<p>${escapeHtml(message.content).replace(/\n/g,"<br>")}</p>`);
+    bubble.innerHTML = attachmentMarkup(message.attachment) + (
+      message.role === "assistant"
+        ? renderMarkdown(message.content)
+        : `<p>${escapeHtml(message.content).replace(/\n/g, "<br>")}</p>`
+    );
 
     if (message.role === "assistant") {
       const actions = document.createElement("div");
@@ -211,30 +293,22 @@ function renderMessages() {
       bubble.appendChild(actions);
     }
 
-    bubble.querySelectorAll("[data-copy-code]").forEach(btn => {
-      btn.addEventListener("click", async () => {
-        await navigator.clipboard?.writeText(decodeURIComponent(btn.dataset.copyCode));
-        btn.textContent = "Copied";
-        setTimeout(() => btn.textContent = "Copy", 1000);
+    bubble.querySelectorAll("[data-copy-code]").forEach(button => {
+      button.addEventListener("click", async () => {
+        await navigator.clipboard?.writeText(decodeURIComponent(button.dataset.copyCode));
+        button.textContent = "Copied";
+        setTimeout(() => button.textContent = "Copy", 1000);
       });
     });
 
     if (message.role === "assistant") {
       article.innerHTML = `<div class="message-avatar">A</div>`;
-      article.appendChild(bubble);
-    } else {
-      article.appendChild(bubble);
     }
+    article.appendChild(bubble);
     els.messages.appendChild(article);
   });
 
   els.messages.scrollTop = els.messages.scrollHeight;
-}
-
-function escapeHtml(value) {
-  return String(value).replace(/[&<>"']/g, c => ({
-    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
-  }[c]));
 }
 
 function renderAll() {
@@ -244,16 +318,26 @@ function renderAll() {
   els.modelName.textContent = selected?.name || "Gemini";
   applyTheme();
   applySidebarCollapsed();
+  updateProfile();
   autosize();
 }
 
 function newChat() {
-  const chat = { id: crypto.randomUUID(), title: "New conversation", createdAt: Date.now(), updatedAt: Date.now(), messages: [] };
+  const chat = {
+    id: crypto.randomUUID(),
+    title: "New conversation",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    messages: []
+  };
   state.chats.unshift(chat);
   state.activeChatId = chat.id;
   attachedContext = null;
   els.attachment.classList.add("hidden");
-  save(); renderAll(); els.composer.focus(); closeMobile();
+  save({ sync: false });
+  renderAll();
+  els.composer.focus();
+  closeMobile();
 }
 
 function autosize() {
@@ -262,15 +346,21 @@ function autosize() {
   els.send.disabled = !els.composer.value.trim() || Boolean(controller);
 }
 
+function removeAttachment() {
+  attachedContext = null;
+  els.attachment.classList.add("hidden");
+  els.attachment.innerHTML = "";
+  els.file.value = "";
+}
+
+window.removeAttachment = removeAttachment;
+
 async function sendMessage(text = els.composer.value.trim()) {
   if (!text || controller) return;
 
   const chat = current();
-  
-  // Create user message with attachment info
   const userMessage = { role: "user", content: text };
-  
-  // If there's an attachment, add it to the message for display
+
   if (attachedContext) {
     userMessage.attachment = {
       name: attachedContext.name,
@@ -280,7 +370,7 @@ async function sendMessage(text = els.composer.value.trim()) {
       base64: attachedContext.type === "image" ? attachedContext.base64 : null
     };
   }
-  
+
   chat.messages.push(userMessage);
 
   if (chat.title === "New conversation") {
@@ -288,10 +378,11 @@ async function sendMessage(text = els.composer.value.trim()) {
   }
 
   els.composer.value = "";
-  const currentAttachment = attachedContext; // Store reference before clearing
+  const currentAttachment = attachedContext;
   attachedContext = null;
   els.attachment.classList.add("hidden");
-  save(); renderAll();
+  save();
+  renderAll();
 
   const assistant = { role: "assistant", content: "" };
   chat.messages.push(assistant);
@@ -309,20 +400,13 @@ async function sendMessage(text = els.composer.value.trim()) {
     currentAttachment?.content ? `Attached file: ${currentAttachment.name}\n${currentAttachment.content}` : ""
   ].filter(Boolean).join("\n\n");
 
-  // Prepare images array if we have an image attachment
   const images = [];
-  if (currentAttachment?.type === "image") {
-    console.log('Adding image to chat:', {
-      hasBase64: Boolean(currentAttachment.base64),
-      mimeType: currentAttachment.mimeType,
-      base64Length: currentAttachment.base64?.length
-    });
+  if (currentAttachment?.type === "image" && currentAttachment.base64 && currentAttachment.mimeType) {
     images.push({
       base64: currentAttachment.base64,
       mimeType: currentAttachment.mimeType
     });
   }
-  console.log('Sending chat with images:', images.length);
 
   try {
     await streamChat(chat.messages.slice(0, -1), context, controller.signal, (_, full) => {
@@ -337,13 +421,13 @@ async function sendMessage(text = els.composer.value.trim()) {
     if (error.name === "AbortError") {
       assistant.content += assistant.content ? "\n\n_Generation stopped._" : "_Generation stopped._";
     } else {
-      let errorMsg = error.message;
-      if (error.message.includes('quota') || error.message.includes('429')) {
-        errorMsg = "⚠️ **API Quota Exceeded**\n\nYou've reached the free tier limit. Please:\n- Wait about 1 minute and try again\n- Or upgrade your Gemini API plan for higher limits\n- Check usage at: https://aistudio.google.com/";
-      }
-      assistant.content = `**Error:** ${errorMsg}`;
+      const quota = error.message.includes("quota") || error.message.includes("429");
+      assistant.content = quota
+        ? "**Error:** API quota exceeded. Wait a moment before trying again or check your Gemini usage limits."
+        : `**Error:** ${error.message}`;
     }
-    save(); renderMessages();
+    save();
+    renderMessages();
   } finally {
     controller = null;
     els.stop.classList.add("hidden");
@@ -358,9 +442,9 @@ function openSettings() {
   $("#systemContext").value = state.settings.context;
   els.settings.showModal();
   checkHealth().then(data => {
-    $("#apiStatus").textContent = data.configured
-      ? `Connected · ${data.model}`
-      : "Gemini API key not configured. Add it to .env.";
+    const gemini = data.configured ? `Gemini connected - ${data.model}` : "Gemini API key not configured.";
+    const supabase = data.supabase?.databaseConfigured ? "Supabase sync ready." : "Supabase sync not configured.";
+    $("#apiStatus").textContent = `${gemini} ${supabase}`;
   }).catch(() => $("#apiStatus").textContent = "Server unavailable.");
 }
 
@@ -373,205 +457,255 @@ function applySidebarCollapsed() {
   els.sidebar.classList.toggle("collapsed", Boolean(state.settings.sidebarCollapsed));
 }
 
-$("#newChatBtn").onclick = newChat;
-$("#openSidebar").onclick = () => { els.sidebar.classList.add("open"); els.overlay.classList.remove("hidden"); };
-$("#closeSidebar").onclick = closeMobile;
-els.overlay.onclick = closeMobile;
-$("#searchChats").oninput = renderChatList;
-
-els.brand.onclick = () => {
-  state.settings.sidebarCollapsed = !state.settings.sidebarCollapsed;
-  save(); applySidebarCollapsed();
-};
-
-$("#composer").addEventListener("input", autosize);
-$("#composer").addEventListener("keydown", e => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault(); sendMessage();
+async function handleSignIn(event) {
+  event.preventDefault();
+  els.authMessage.textContent = "Signing in...";
+  try {
+    const data = await signIn(els.authEmail.value.trim(), els.authPassword.value);
+    currentUser = data.user;
+    await enterApp();
+  } catch (error) {
+    els.authMessage.textContent = error.message;
   }
-});
-$("#sendBtn").onclick = () => sendMessage();
-$("#stopBtn").onclick = () => controller?.abort();
+}
 
-document.querySelectorAll("[data-prompt]").forEach(btn => {
-  btn.onclick = () => sendMessage(btn.dataset.prompt);
-});
+async function handleSignUp() {
+  els.authMessage.textContent = "Creating account...";
+  try {
+    const data = await signUp(els.authEmail.value.trim(), els.authPassword.value);
+    currentUser = data.user;
+    els.authMessage.textContent = data.session
+      ? "Account created."
+      : "Account created. Check your email to confirm sign in.";
+    if (data.session) await enterApp();
+  } catch (error) {
+    els.authMessage.textContent = error.message;
+  }
+}
 
-$("#attachBtn").onclick = () => els.file.click();
-els.file.onchange = async () => {
+async function handleSignOut() {
+  try {
+    await signOut();
+  } finally {
+    currentUser = null;
+    showAuth();
+  }
+}
+
+async function enterApp() {
+  showApp();
+  updateProfile();
+  await loadCloudState();
+  renderAll();
+}
+
+function bindEvents() {
+  els.authForm.addEventListener("submit", handleSignIn);
+  els.signUp.addEventListener("click", handleSignUp);
+  els.signOut.addEventListener("click", handleSignOut);
+
+  $("#newChatBtn").onclick = newChat;
+  $("#openSidebar").onclick = () => {
+    els.sidebar.classList.add("open");
+    els.overlay.classList.remove("hidden");
+  };
+  $("#closeSidebar").onclick = closeMobile;
+  els.overlay.onclick = closeMobile;
+  $("#searchChats").oninput = renderChatList;
+
+  els.brand.onclick = () => {
+    state.settings.sidebarCollapsed = !state.settings.sidebarCollapsed;
+    save({ sync: false });
+    applySidebarCollapsed();
+  };
+
+  els.composer.addEventListener("input", autosize);
+  els.composer.addEventListener("keydown", event => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      sendMessage();
+    }
+  });
+  els.send.onclick = () => sendMessage();
+  els.stop.onclick = () => controller?.abort();
+
+  document.querySelectorAll("[data-prompt]").forEach(button => {
+    button.onclick = () => sendMessage(button.dataset.prompt);
+  });
+
+  $("#attachBtn").onclick = () => els.file.click();
+  els.file.onchange = handleFileSelected;
+
+  $("#voiceBtn").onclick = () => {
+    startListening({
+      onText: text => {
+        els.composer.value = text;
+        autosize();
+      },
+      onError: message => alert(message)
+    });
+  };
+
+  $("#toolBtn").onclick = () => els.toolPopover.classList.toggle("hidden");
+  els.toolPopover.querySelectorAll("[data-tool]").forEach(button => {
+    button.onclick = async () => {
+      const tool = button.dataset.tool;
+      let input = "";
+      if (tool === "calculator") input = prompt("Expression, e.g. (25*4)+10") || "";
+      try {
+        const result = await runTool(tool, input);
+        const message = tool === "calculator"
+          ? `The calculator returned ${result.result}. Please provide this result to me naturally.`
+          : `The current local server time is ${result.result} (${result.timezone}). Please provide this result to me naturally.`;
+        await sendMessage(message);
+      } catch (error) {
+        alert(error.message);
+      }
+      els.toolPopover.classList.add("hidden");
+    };
+  });
+
+  $("#modelBtn").onclick = () => els.modelMenu.classList.toggle("hidden");
+  els.modelMenu.querySelectorAll("[data-model]").forEach(button => {
+    button.onclick = () => {
+      state.settings.model = button.dataset.model;
+      save();
+      renderAll();
+      els.modelMenu.classList.add("hidden");
+    };
+  });
+
+  $("#themeBtn").onclick = () => {
+    state.settings.theme = state.settings.theme === "dark" ? "light" : "dark";
+    save({ sync: false });
+    applyTheme();
+  };
+
+  $("#settingsBtn").onclick = openSettings;
+  $("#settingsTopBtn").onclick = openSettings;
+  $("#closeSettings").onclick = () => els.settings.close();
+  $("#saveSettings").onclick = () => {
+    state.settings.theme = $("#appearanceSelect").value;
+    state.settings.voice = $("#voiceSelect").value;
+    state.settings.context = $("#systemContext").value.trim();
+    save();
+    applyTheme();
+    els.settings.close();
+    renderAll();
+  };
+
+  $("#exportBtn").onclick = exportCurrentChat;
+
+  document.addEventListener("click", event => {
+    if (!event.target.closest(".model-picker")) els.modelMenu.classList.add("hidden");
+    if (!event.target.closest("#toolBtn") && !event.target.closest("#toolPopover")) {
+      els.toolPopover.classList.add("hidden");
+    }
+  });
+
+  document.addEventListener("keydown", event => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      newChat();
+    }
+  });
+
+  matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", applyTheme);
+}
+
+async function handleFileSelected() {
   const file = els.file.files[0];
   if (!file) return;
-  
+
   els.attachment.classList.remove("hidden");
   els.attachment.innerHTML = `
-    <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--surface-2); border-radius: 8px; margin: 8px 0;">
-      <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
-        <div style="width: 32px; height: 32px; background: var(--accent); border-radius: 6px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">
-          📄
-        </div>
-        <div>
-          <div style="font-weight: 600; font-size: 13px;">Processing...</div>
-          <div style="font-size: 11px; color: var(--muted);">${file.name}</div>
-        </div>
-      </div>
-      <button onclick="removeAttachment()" style="background: none; border: none; color: var(--muted); font-size: 16px; cursor: pointer; padding: 4px; border-radius: 4px;" title="Remove file">×</button>
+    <div class="attachment-row">
+      <div><strong>Processing...</strong><small>${escapeHtml(file.name)}</small></div>
+      <button onclick="removeAttachment()" title="Remove file">x</button>
     </div>
   `;
-  
+
   try {
     attachedContext = await uploadFile(file);
-    console.log('Uploaded file:', attachedContext); // Debug log
-    console.log('File type detected:', attachedContext.type);
-    console.log('Has base64:', Boolean(attachedContext.base64));
-    
-    // Handle different file types with better UI
-    if (attachedContext.type === "image") {
-      // Show image preview with remove button
-      els.attachment.innerHTML = `
-        <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--surface-2); border-radius: 8px; margin: 8px 0;">
-          <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
-            <img src="data:${attachedContext.mimeType};base64,${attachedContext.base64}" 
-                 style="width: 40px; height: 40px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border);">
-            <div>
-              <div style="font-weight: 600; font-size: 13px; color: var(--text);">📷 Image ready</div>
-              <div style="font-size: 11px; color: var(--muted);">${escapeHtml(attachedContext.name)} • ${attachedContext.analysis}</div>
-            </div>
-          </div>
-          <button onclick="removeAttachment()" style="background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 4px; border-radius: 4px; line-height: 1;" title="Remove image">×</button>
+    const label = attachedContext.type === "image"
+      ? "Image ready"
+      : attachedContext.type === "document"
+        ? "Document ready"
+        : "File ready";
+    const preview = attachedContext.type === "image" && attachedContext.base64
+      ? `<img src="data:${attachedContext.mimeType};base64,${attachedContext.base64}" alt="">`
+      : `<div class="file-chip">${attachedContext.type === "document" ? "Doc" : "File"}</div>`;
+
+    els.attachment.innerHTML = `
+      <div class="attachment-row">
+        <div class="attachment-main">
+          ${preview}
+          <div><strong>${label}</strong><small>${escapeHtml(attachedContext.name)} - ${attachedContext.analysis}</small></div>
         </div>
-      `;
-      // DON'T auto-fill composer - let user type their own question
-    } else if (attachedContext.type === "text") {
-      // Show text file info with remove button
-      els.attachment.innerHTML = `
-        <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--surface-2); border-radius: 8px; margin: 8px 0;">
-          <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
-            <div style="width: 32px; height: 32px; background: var(--accent); border-radius: 6px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">
-              📄
-            </div>
-            <div>
-              <div style="font-weight: 600; font-size: 13px; color: var(--text);">📝 File ready</div>
-              <div style="font-size: 11px; color: var(--muted);">${escapeHtml(attachedContext.name)} • ${(attachedContext.size/1024).toFixed(1)} KB • ${attachedContext.analysis}</div>
-            </div>
-          </div>
-          <button onclick="removeAttachment()" style="background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 4px; border-radius: 4px; line-height: 1;" title="Remove file">×</button>
-        </div>
-      `;
-      // DON'T auto-fill composer
-    } else if (attachedContext.type === "document") {
-      // Show document info with remove button
-      els.attachment.innerHTML = `
-        <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--surface-2); border-radius: 8px; margin: 8px 0;">
-          <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
-            <div style="width: 32px; height: 32px; background: var(--accent); border-radius: 6px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">
-              📋
-            </div>
-            <div>
-              <div style="font-weight: 600; font-size: 13px; color: var(--text);">📋 Document ready</div>
-              <div style="font-size: 11px; color: var(--muted);">${escapeHtml(attachedContext.name)} • ${(attachedContext.size/1024).toFixed(1)} KB • ${attachedContext.analysis}</div>
-            </div>
-          </div>
-          <button onclick="removeAttachment()" style="background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 4px; border-radius: 4px; line-height: 1;" title="Remove document">×</button>
-        </div>
-      `;
-      // DON'T auto-fill composer
-    }
-    
+        <button onclick="removeAttachment()" title="Remove file">x</button>
+      </div>
+    `;
     autosize();
   } catch (error) {
-    console.error('Upload error:', error); // Debug log
     els.attachment.innerHTML = `
-      <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--surface-2); border-radius: 8px; margin: 8px 0; border-left: 3px solid #ef4444;">
-        <div style="display: flex; align-items: center; gap: 10px; flex: 1;">
-          <div style="width: 32px; height: 32px; background: #ef4444; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;">
-            ⚠️
-          </div>
-          <div>
-            <div style="font-weight: 600; font-size: 13px; color: #ef4444;">Upload failed</div>
-            <div style="font-size: 11px; color: var(--muted);">${error.message}</div>
-          </div>
-        </div>
-        <button onclick="removeAttachment()" style="background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; padding: 4px; border-radius: 4px; line-height: 1;" title="Remove">×</button>
+      <div class="attachment-row error">
+        <div><strong>Upload failed</strong><small>${escapeHtml(error.message)}</small></div>
+        <button onclick="removeAttachment()" title="Remove">x</button>
       </div>
     `;
   }
-};
-
-$("#voiceBtn").onclick = () => {
-  startListening({
-    onText: text => {
-      els.composer.value = text;
-      autosize();
-    },
-    onError: msg => alert(msg)
-  });
-};
-
-$("#toolBtn").onclick = () => els.toolPopover.classList.toggle("hidden");
-els.toolPopover.querySelectorAll("[data-tool]").forEach(btn => {
-  btn.onclick = async () => {
-    const tool = btn.dataset.tool;
-    let input = "";
-    if (tool === "calculator") input = prompt("Expression, e.g. (25*4)+10") || "";
-    try {
-      const result = await runTool(tool, input);
-      els.composer.value = tool === "calculator" ? `Calculate ${input}` : "What time is it?";
-      await sendMessage(`${tool === "calculator" ? `The calculator returned ${result.result}.` : `The current local server time is ${result.result} (${result.timezone}).`} Please provide this result to me naturally.`);
-    } catch (e) { alert(e.message); }
-    els.toolPopover.classList.add("hidden");
-  };
-});
-
-$("#modelBtn").onclick = () => els.modelMenu.classList.toggle("hidden");
-els.modelMenu.querySelectorAll("[data-model]").forEach(btn => {
-  btn.onclick = () => {
-    state.settings.model = btn.dataset.model;
-    save(); renderAll(); els.modelMenu.classList.add("hidden");
-  };
-});
-
-// Initialize with default model if not set
-if (!availableModels.some(model => model.id === state.settings.model)) {
-  state.settings.model = "gemini-1.5-flash";
-  save();
 }
 
-$("#themeBtn").onclick = () => {
-  state.settings.theme = state.settings.theme === "dark" ? "light" : "dark";
-  save(); applyTheme();
-};
-
-$("#settingsBtn").onclick = openSettings;
-$("#settingsTopBtn").onclick = openSettings;
-$("#closeSettings").onclick = () => els.settings.close();
-$("#saveSettings").onclick = () => {
-  state.settings.theme = $("#appearanceSelect").value;
-  state.settings.voice = $("#voiceSelect").value;
-  state.settings.context = $("#systemContext").value.trim();
-  save(); applyTheme(); els.settings.close(); renderAll();
-};
-
-$("#exportBtn").onclick = () => {
+function exportCurrentChat() {
   const chat = current();
-  const md = `# ${chat.title}\n\n` + chat.messages.map(m => `## ${m.role === "user" ? "You" : "Assistant"}\n\n${m.content}`).join("\n\n");
-  const blob = new Blob([md], { type: "text/markdown" });
+  const markdown = `# ${chat.title}\n\n` + chat.messages
+    .map(message => `## ${message.role === "user" ? "You" : "Assistant"}\n\n${message.content}`)
+    .join("\n\n");
+  const blob = new Blob([markdown], { type: "text/markdown" });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url; a.download = `${chat.title.replace(/[^\w]+/g,"-").toLowerCase() || "conversation"}.md`; a.click();
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${chat.title.replace(/[^\w]+/g, "-").toLowerCase() || "conversation"}.md`;
+  link.click();
   URL.revokeObjectURL(url);
-};
+}
 
-document.addEventListener("click", e => {
-  if (!e.target.closest(".model-picker")) els.modelMenu.classList.add("hidden");
-  if (!e.target.closest("#toolBtn") && !e.target.closest("#toolPopover")) els.toolPopover.classList.add("hidden");
-});
+async function bootstrap() {
+  bindEvents();
 
-document.addEventListener("keydown", e => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-    e.preventDefault(); newChat();
+  if (!availableModels.some(model => model.id === state.settings.model)) {
+    state.settings.model = "gemini-3.6-flash";
+    saveState(state);
   }
-});
 
-matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", applyTheme);
-renderAll();
-checkHealth().then(data => console.log("API:", data)).catch(() => {});
+  try {
+    const auth = await initAuth();
+    authReady = isAuthConfigured();
+    databaseReady = isDatabaseConfigured();
+    currentUser = auth.user;
+
+    onAuthChange(async (_event, session) => {
+      currentUser = session?.user || null;
+      if (currentUser) {
+        await enterApp();
+      } else if (authReady) {
+        state = loadState();
+        showAuth();
+      }
+    });
+
+    if (authReady && !currentUser) {
+      showAuth();
+      return;
+    }
+  } catch (error) {
+    console.warn("Auth unavailable:", error.message);
+    authReady = false;
+    databaseReady = false;
+  }
+
+  await enterApp();
+  checkHealth().then(data => console.log("API:", data)).catch(() => {});
+}
+
+bootstrap();

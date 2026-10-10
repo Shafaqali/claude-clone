@@ -3,6 +3,13 @@ export async function checkHealth() {
   return response.json();
 }
 
+export async function getAppConfig() {
+  const response = await fetch("/api/config");
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Could not load app config");
+  return data;
+}
+
 export async function getModels() {
   const response = await fetch("/api/models");
   const data = await response.json();
@@ -58,4 +65,41 @@ export async function createFile(filename, content, type = "text") {
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || "File creation failed");
   return data;
+}
+
+async function parseJsonResponse(response, fallback) {
+  if (response.status === 204) return null;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || fallback);
+  return data;
+}
+
+export async function fetchCloudChats(authHeaders) {
+  const response = await fetch("/api/chats", { headers: authHeaders });
+  const data = await parseJsonResponse(response, "Could not load chats");
+  return data.chats || [];
+}
+
+export async function saveCloudChat(chat, authHeaders) {
+  const response = await fetch(`/api/chats/${encodeURIComponent(chat.id)}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders
+    },
+    body: JSON.stringify({
+      title: chat.title,
+      messages: chat.messages
+    })
+  });
+  const data = await parseJsonResponse(response, "Could not save chat");
+  return data.chat;
+}
+
+export async function deleteCloudChat(id, authHeaders) {
+  const response = await fetch(`/api/chats/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: authHeaders
+  });
+  await parseJsonResponse(response, "Could not delete chat");
 }

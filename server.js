@@ -6,6 +6,7 @@ import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { verifyAuth, createAdminClient } from "@supabase/server/core";
 
 dotenv.config();
 
@@ -17,9 +18,15 @@ const HOST = process.env.HOST || "0.0.0.0";
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 const FALLBACK_MODELS = [MODEL, "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"]
   .filter((model, index, models) => models.indexOf(model) === index);
+const SUPABASE_URL = process.env.SUPABASE_URL || "";
+const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || "";
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || "";
+const SUPABASE_AUTH_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY);
+const SUPABASE_DB_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY && SUPABASE_SECRET_KEY);
+const SUPABASE_ISSUER = SUPABASE_URL ? `${SUPABASE_URL.replace(/\/+$/, "")}/auth/v1` : undefined;
 
 app.use(cors());
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "25mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 const uploadDir = path.join(__dirname, "uploads");
@@ -33,6 +40,104 @@ const upload = multer({
 const client = process.env.GEMINI_API_KEY
   ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
   : null;
+
+let supabaseAdmin = null;
+
+function getSupabaseAdmin() {
+  if (!SUPABASE_DB_CONFIGURED) return null;
+  if (!supabaseAdmin) {
+    supabaseAdmin = createAdminClient();
+  }
+  return supabaseAdmin;
+}
+
+function expressToWebRequest(req) {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (Array.isArray(value)) {
+      value.forEach(item => headers.append(key, item));
+    } else if (value !== undefined) {
+      headers.set(key, String(value));
+    }
+  }
+
+  const url = `${req.protocol}://${req.get("host")}${req.originalUrl || req.url}`;
+  return new Request(url, { method: req.method, headers });
+}
+
+async function requireUser(req, res, next) {
+  if (!SUPABASE_DB_CONFIGURED) {
+    return res.status(503).json({
+      error: "Supabase is not configured. Set SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, SUPABASE_SECRET_KEY, and SUPABASE_JWKS_URL."
+    });
+  }
+
+  const { data: auth, error } = await verifyAuth(expressToWebRequest(req), {
+    auth: "user",
+    issuer: SUPABASE_ISSUER
+  });
+
+  if (error) {
+    return res.status(error.status || 401).json({
+      error: "Authentication required.",
+      code: error.code || "AUTH_ERROR"
+    });
+  }
+
+  const id = auth.userClaims?.id || auth.jwtClaims?.sub;
+  if (!id) {
+    return res.status(401).json({ error: "Authentication token does not include a user id." });
+  }
+
+  req.user = {
+    id,
+    email: auth.userClaims?.email || auth.jwtClaims?.email || ""
+  };
+  next();
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value));
+}
+
+function sanitizeMessages(messages = []) {
+  if (!Array.isArray(messages)) return [];
+
+  return messages
+    .filter(message => ["user", "assistant"].includes(message?.role) && typeof message.content === "string")
+    .slice(-200)
+    .map(message => {
+      const clean = {
+        role: message.role,
+        content: message.content.slice(0, 100000)
+      };
+
+      if (message.attachment && typeof message.attachment === "object") {
+        const attachment = message.attachment;
+        clean.attachment = {
+          name: String(attachment.name || "").slice(0, 255),
+          type: String(attachment.type || "").slice(0, 40),
+          size: Number(attachment.size || 0),
+          mimeType: String(attachment.mimeType || "").slice(0, 120),
+          base64: typeof attachment.base64 === "string" && attachment.base64.length <= 2000000
+            ? attachment.base64
+            : null
+        };
+      }
+
+      return clean;
+    });
+}
+
+function formatChat(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    messages: Array.isArray(row.messages) ? row.messages : [],
+    createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+    updatedAt: row.updated_at ? new Date(row.updated_at).getTime() : Date.now()
+  };
+}
 
 function cleanHistory(messages = []) {
   return messages
@@ -68,11 +173,128 @@ Current application context:
 ${context.slice(0, 12000)}`;
 }
 
+app.get("/api/config", (req, res) => {
+  res.json({
+    supabase: {
+      configured: SUPABASE_AUTH_CONFIGURED,
+      databaseConfigured: SUPABASE_DB_CONFIGURED,
+      url: SUPABASE_AUTH_CONFIGURED ? SUPABASE_URL : "",
+      publishableKey: SUPABASE_AUTH_CONFIGURED ? SUPABASE_PUBLISHABLE_KEY : ""
+    }
+  });
+});
+
+app.get("/api/me", requireUser, (req, res) => {
+  res.json({ user: req.user });
+});
+
+app.get("/api/chats", requireUser, async (req, res) => {
+  try {
+    const admin = getSupabaseAdmin();
+    const { data, error } = await admin
+      .from("chats")
+      .select("id,title,messages,created_at,updated_at")
+      .eq("user_id", req.user.id)
+      .order("updated_at", { ascending: false });
+
+    if (error) throw error;
+    res.json({ chats: (data || []).map(formatChat) });
+  } catch (error) {
+    res.status(500).json({
+      error: "Could not load chats from Supabase.",
+      details: error.message,
+      hint: "Run the SQL in supabase/schema.sql if the chats table does not exist."
+    });
+  }
+});
+
+app.put("/api/chats/:id", requireUser, async (req, res) => {
+  const { id } = req.params;
+  const { title = "New conversation", messages = [] } = req.body || {};
+
+  if (!isUuid(id)) {
+    return res.status(400).json({ error: "Invalid chat id." });
+  }
+
+  const cleanTitle = String(title || "New conversation").replace(/\s+/g, " ").slice(0, 120);
+  const cleanMessages = sanitizeMessages(messages);
+  const now = new Date().toISOString();
+
+  try {
+    const admin = getSupabaseAdmin();
+    const update = await admin
+      .from("chats")
+      .update({
+        title: cleanTitle,
+        messages: cleanMessages,
+        updated_at: now
+      })
+      .eq("id", id)
+      .eq("user_id", req.user.id)
+      .select("id,title,messages,created_at,updated_at")
+      .maybeSingle();
+
+    if (update.error) throw update.error;
+
+    if (update.data) {
+      return res.json({ chat: formatChat(update.data) });
+    }
+
+    const insert = await admin
+      .from("chats")
+      .insert({
+        id,
+        user_id: req.user.id,
+        title: cleanTitle,
+        messages: cleanMessages,
+        created_at: now,
+        updated_at: now
+      })
+      .select("id,title,messages,created_at,updated_at")
+      .single();
+
+    if (insert.error) throw insert.error;
+    res.status(201).json({ chat: formatChat(insert.data) });
+  } catch (error) {
+    const duplicateId = error.code === "23505";
+    res.status(duplicateId ? 409 : 500).json({
+      error: duplicateId
+        ? "A chat with this id already exists for another account."
+        : "Could not save chat to Supabase.",
+      details: error.message
+    });
+  }
+});
+
+app.delete("/api/chats/:id", requireUser, async (req, res) => {
+  const { id } = req.params;
+  if (!isUuid(id)) {
+    return res.status(400).json({ error: "Invalid chat id." });
+  }
+
+  try {
+    const admin = getSupabaseAdmin();
+    const { error } = await admin
+      .from("chats")
+      .delete()
+      .eq("id", id)
+      .eq("user_id", req.user.id);
+
+    if (error) throw error;
+    res.status(204).end();
+  } catch (error) {
+    res.status(500).json({
+      error: "Could not delete chat from Supabase.",
+      details: error.message
+    });
+  }
+});
+
 // Quick test endpoint
 app.get("/api/test-key", async (req, res) => {
   if (!client) {
     return res.json({ 
-      error: "❌ No API key configured",
+      error: "No API key configured",
       solution: "Add GEMINI_API_KEY to .env file"
     });
   }
@@ -91,10 +313,10 @@ app.get("/api/test-key", async (req, res) => {
     let solution = "Check your API key";
     
     if (error.message?.includes('suspended') || error.message?.includes('CONSUMER_SUSPENDED')) {
-      errorMsg = "🚨 API key suspended";
+      errorMsg = "API key suspended";
       solution = "Create new API key at https://aistudio.google.com/";
     } else if (error.message?.includes('403') || error.message?.includes('Forbidden')) {
-      errorMsg = "🔑 API key invalid or no access";
+      errorMsg = "API key invalid or no access";
       solution = "Get new API key from https://aistudio.google.com/";
     }
     
@@ -108,7 +330,7 @@ app.get("/api/test-key", async (req, res) => {
 
 app.get("/api/health", (req, res) => {
   const availableModels = [
-    { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash ⭐ (Latest)" },
+    { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash (Latest)" },
     { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
     { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
     { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite" }
@@ -118,13 +340,17 @@ app.get("/api/health", (req, res) => {
     ok: true,
     configured: Boolean(process.env.GEMINI_API_KEY),
     model: MODEL,
-    availableModels: availableModels
+    availableModels: availableModels,
+    supabase: {
+      configured: SUPABASE_AUTH_CONFIGURED,
+      databaseConfigured: SUPABASE_DB_CONFIGURED
+    }
   });
 });
 
 app.get("/api/models", async (req, res) => {
   const fallbackModels = [
-    { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash ⭐ (Latest)" },
+    { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash (Latest)" },
     { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
     { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
     { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite" }
@@ -293,7 +519,7 @@ app.post("/api/chat", async (req, res) => {
     
     // Handle specific errors
     if (errorMessage.includes('unavailable') || errorMessage.includes('not found')) {
-      errorMessage = "⚠️ **Model Access Issue**\n\nYour API key doesn't have access to the requested Gemini models. Please:\n\n1. **Get a new API key** from https://aistudio.google.com/\n2. **Make sure it starts with 'AIza'**\n3. **Restart the server** after updating .env\n\nTried models: " + modelFallbacks.join(', ');
+      errorMessage = "**Model Access Issue**\n\nYour API key doesn't have access to the requested Gemini models. Please:\n\n1. **Get a new API key** from https://aistudio.google.com/\n2. **Make sure it starts with 'AIza'**\n3. **Restart the server** after updating .env\n\nTried models: " + modelFallbacks.join(', ');
     } else if (errorMessage.includes('quota') || errorMessage.includes('429')) {
       errorMessage = "API quota exceeded. Please wait a moment before trying again, or check your Gemini API usage limits.";
     } else if (errorMessage.includes('API key')) {
