@@ -99,6 +99,19 @@ export async function signUp(email, password) {
   return data;
 }
 
+export async function resendConfirmation(email) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { data, error } = await supabase.auth.resend({
+    type: "signup",
+    email,
+    options: {
+      emailRedirectTo: authRedirectTo()
+    }
+  });
+  if (error) throw error;
+  return data;
+}
+
 export async function sendPasswordReset(email) {
   if (!supabase) throw new Error("Supabase is not configured.");
   const { data, error } = await supabase.auth.resetPasswordForEmail(email, {

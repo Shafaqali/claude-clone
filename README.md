@@ -119,6 +119,7 @@ https://aistudio.google.com/app/apikey
 4. In Authentication settings, enable email/password signups if you want users to create accounts from the app.
 5. In Authentication URL Configuration, set the Site URL to your app URL, for example `http://localhost:3000` locally.
 6. Add the same app URL to Redirect URLs so email confirmation and password reset links can return to the app.
+7. If you do not want email verification during local testing, turn off email confirmation in Supabase Auth settings. Otherwise users must click the confirmation email before signing in.
 
 The `SUPABASE_PUBLISHABLE_KEY` is safe for the browser. The `SUPABASE_SECRET_KEY` must stay in `.env` or your hosting provider's server-side environment variables only.
 
@@ -214,6 +215,8 @@ npm start
 If the app says the API key is missing, confirm `.env` exists and restart the server.
 
 If Gemini returns a model-access error, try a model ID available to your account by changing `GEMINI_MODEL` in `.env`.
+
+If sign in fails with `Email not confirmed`, confirm the user from the email Supabase sends, use the app's resend confirmation button, or disable email confirmation in Supabase Auth settings for local testing.
 
 If uploads fail, confirm the file type is supported and the file is below the configured upload limit.
 

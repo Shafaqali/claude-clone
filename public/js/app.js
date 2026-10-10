@@ -16,6 +16,7 @@ import {
   onAuthChange,
   signIn,
   signUp,
+  resendConfirmation,
   sendPasswordReset,
   updatePassword,
   signOut,
@@ -43,6 +44,7 @@ let databaseReady = false;
 let authMode = "signin";
 let authBusy = false;
 let recoveryModeActive = false;
+let lastConfirmationEmail = "";
 const saveTimers = new Map();
 
 const els = {
@@ -63,6 +65,7 @@ const els = {
   authSubmit: $("#authSubmitBtn"),
   authMessage: $("#authMessage"),
   forgotPassword: $("#forgotPasswordBtn"),
+  resendConfirmation: $("#resendConfirmationBtn"),
   backToSignIn: $("#backToSignInBtn"),
   signOut: $("#signOutBtn"),
   profileName: $("#profileName"),
@@ -205,6 +208,7 @@ function setAuthBusy(isBusy) {
   els.authSignInTab.disabled = isBusy;
   els.authSignUpTab.disabled = isBusy;
   els.forgotPassword.disabled = isBusy;
+  els.resendConfirmation.disabled = isBusy;
   els.backToSignIn.disabled = isBusy;
   els.authEmail.disabled = isBusy;
   els.authPassword.disabled = isBusy;
@@ -255,6 +259,7 @@ function setAuthMode(mode, message = "", type = "") {
   els.authPasswordWrap.classList.toggle("hidden", mode === "reset");
   els.authConfirmWrap.classList.toggle("hidden", mode !== "signup" && mode !== "update");
   els.forgotPassword.classList.toggle("hidden", mode !== "signin");
+  els.resendConfirmation.classList.add("hidden");
   els.backToSignIn.classList.toggle("hidden", mode === "signin" || mode === "update");
 
   els.authEmail.required = mode !== "update";
@@ -272,6 +277,17 @@ function setAuthMode(mode, message = "", type = "") {
 
 function normalizedEmail() {
   return els.authEmail.value.trim().toLowerCase();
+}
+
+function isEmailNotConfirmedError(error) {
+  return /email not confirmed|email_not_confirmed/i.test(`${error?.message || ""} ${error?.code || ""}`);
+}
+
+function showConfirmationHelp(email, message = "Email not confirmed. Check your inbox or resend the confirmation link.", type = "error") {
+  lastConfirmationEmail = email;
+  setAuthMode("signin", message, type);
+  els.authEmail.value = email;
+  els.resendConfirmation.classList.remove("hidden");
 }
 
 function validatePasswordPair() {
@@ -584,15 +600,17 @@ async function handleAuthSubmit(event) {
     }
 
     if (authMode === "signup") {
+      const email = normalizedEmail();
       const password = validatePasswordPair();
       setAuthMessage("Creating account...");
-      const data = await signUp(normalizedEmail(), password);
-      currentUser = data.user;
+      const data = await signUp(email, password);
 
       if (data.session) {
+        currentUser = data.user;
         await enterApp();
       } else {
-        setAuthMode("signin", "Account created. Check your email before signing in.", "success");
+        currentUser = null;
+        showConfirmationHelp(email, "Account created. Check your email before signing in.", "success");
       }
       return;
     }
@@ -614,6 +632,31 @@ async function handleAuthSubmit(event) {
       setAuthMessage("Password updated.", "success");
       await enterApp();
     }
+  } catch (error) {
+    if (isEmailNotConfirmedError(error)) {
+      showConfirmationHelp(normalizedEmail());
+    } else {
+      setAuthMessage(error.message, "error");
+    }
+  } finally {
+    setAuthBusy(false);
+  }
+}
+
+async function handleResendConfirmation() {
+  if (authBusy) return;
+  const email = lastConfirmationEmail || normalizedEmail();
+
+  if (!email) {
+    setAuthMessage("Enter your email first.", "error");
+    return;
+  }
+
+  setAuthBusy(true);
+  try {
+    setAuthMessage("Sending confirmation email...");
+    await resendConfirmation(email);
+    showConfirmationHelp(email, "Confirmation email sent. Check your inbox.", "success");
   } catch (error) {
     setAuthMessage(error.message, "error");
   } finally {
@@ -643,6 +686,7 @@ function bindEvents() {
   els.authSignInTab.addEventListener("click", () => setAuthMode("signin"));
   els.authSignUpTab.addEventListener("click", () => setAuthMode("signup"));
   els.forgotPassword.addEventListener("click", () => setAuthMode("reset"));
+  els.resendConfirmation.addEventListener("click", handleResendConfirmation);
   els.backToSignIn.addEventListener("click", () => setAuthMode("signin"));
   els.signOut.addEventListener("click", handleSignOut);
 
