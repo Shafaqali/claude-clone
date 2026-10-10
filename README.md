@@ -117,6 +117,8 @@ https://aistudio.google.com/app/apikey
 2. Go to SQL Editor.
 3. Run the SQL in `supabase/schema.sql`.
 4. In Authentication settings, enable email/password signups if you want users to create accounts from the app.
+5. In Authentication URL Configuration, set the Site URL to your app URL, for example `http://localhost:3000` locally.
+6. Add the same app URL to Redirect URLs so email confirmation and password reset links can return to the app.
 
 The `SUPABASE_PUBLISHABLE_KEY` is safe for the browser. The `SUPABASE_SECRET_KEY` must stay in `.env` or your hosting provider's server-side environment variables only.
 

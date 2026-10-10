@@ -16,32 +16,43 @@
   <link rel="stylesheet" href="/css/styles.css">
 </head>
 <body>
-  <section class="auth-screen hidden" id="authScreen">
+  <section class="auth-screen" id="authScreen">
     <form class="auth-panel" id="authForm">
       <div class="auth-brand">
         <span class="brand-mark">A</span>
         <div>
-          <h1>Personal AI</h1>
-          <p>Sign in to sync conversations across devices.</p>
+          <h1 id="authTitle">Personal AI</h1>
+          <p id="authSubtitle">Checking your session...</p>
         </div>
       </div>
 
-      <label>Email
+      <div class="auth-tabs" id="authTabs">
+        <button type="button" class="active" id="authSignInTab">Sign in</button>
+        <button type="button" id="authSignUpTab">Create account</button>
+      </div>
+
+      <label id="authEmailWrap">Email
         <input id="authEmail" type="email" autocomplete="email" required>
       </label>
-      <label>Password
+      <label id="authPasswordWrap">Password
         <input id="authPassword" type="password" autocomplete="current-password" minlength="6" required>
+      </label>
+      <label class="hidden" id="authConfirmWrap">Confirm password
+        <input id="authConfirmPassword" type="password" autocomplete="new-password" minlength="6">
       </label>
 
       <div class="auth-actions">
-        <button class="primary-btn" type="submit" id="signInBtn">Sign in</button>
-        <button class="secondary-btn" type="button" id="signUpBtn">Create account</button>
+        <button class="primary-btn" type="submit" id="authSubmitBtn">Sign in</button>
+      </div>
+      <div class="auth-links">
+        <button type="button" id="forgotPasswordBtn">Forgot password?</button>
+        <button type="button" class="hidden" id="backToSignInBtn">Back to sign in</button>
       </div>
       <p class="auth-message" id="authMessage"></p>
     </form>
   </section>
 
-  <div class="app-shell" id="appShell">
+  <div class="app-shell hidden" id="appShell">
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-top">
         <button class="brand" id="brandButton" aria-label="Toggle sidebar" title="Toggle sidebar">

@@ -1,13 +1,25 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { getAppConfig } from "./api.js";
 
 let supabase = null;
+let createSupabaseClient = null;
 let supabaseConfig = {
   configured: false,
   databaseConfigured: false,
   url: "",
   publishableKey: ""
 };
+
+function authRedirectTo() {
+  return `${window.location.origin}${window.location.pathname}`;
+}
+
+async function loadSupabaseClientFactory() {
+  if (!createSupabaseClient) {
+    const module = await import("https://esm.sh/@supabase/supabase-js@2");
+    createSupabaseClient = module.createClient;
+  }
+  return createSupabaseClient;
+}
 
 export async function initAuth() {
   const config = await getAppConfig();
@@ -17,6 +29,7 @@ export async function initAuth() {
     return { configured: false, databaseConfigured: false, session: null, user: null };
   }
 
+  const createClient = await loadSupabaseClientFactory();
   supabase = createClient(supabaseConfig.url, supabaseConfig.publishableKey, {
     auth: {
       persistSession: true,
@@ -75,7 +88,29 @@ export async function signIn(email, password) {
 
 export async function signUp(email, password) {
   if (!supabase) throw new Error("Supabase is not configured.");
-  const { data, error } = await supabase.auth.signUp({ email, password });
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      emailRedirectTo: authRedirectTo()
+    }
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function sendPasswordReset(email) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: authRedirectTo()
+  });
+  if (error) throw error;
+  return data;
+}
+
+export async function updatePassword(password) {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { data, error } = await supabase.auth.updateUser({ password });
   if (error) throw error;
   return data;
 }

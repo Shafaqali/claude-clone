@@ -12,9 +12,12 @@ import {
   initAuth,
   isAuthConfigured,
   isDatabaseConfigured,
+  getUser,
   onAuthChange,
   signIn,
   signUp,
+  sendPasswordReset,
+  updatePassword,
   signOut,
   authHeaders
 } from "./auth.js";
@@ -37,16 +40,30 @@ let attachedContext = null;
 let currentUser = null;
 let authReady = false;
 let databaseReady = false;
+let authMode = "signin";
+let authBusy = false;
+let recoveryModeActive = false;
 const saveTimers = new Map();
 
 const els = {
   appShell: $("#appShell"),
   authScreen: $("#authScreen"),
   authForm: $("#authForm"),
+  authTitle: $("#authTitle"),
+  authSubtitle: $("#authSubtitle"),
+  authTabs: $("#authTabs"),
+  authSignInTab: $("#authSignInTab"),
+  authSignUpTab: $("#authSignUpTab"),
+  authEmailWrap: $("#authEmailWrap"),
   authEmail: $("#authEmail"),
+  authPasswordWrap: $("#authPasswordWrap"),
   authPassword: $("#authPassword"),
+  authConfirmWrap: $("#authConfirmWrap"),
+  authConfirmPassword: $("#authConfirmPassword"),
+  authSubmit: $("#authSubmitBtn"),
   authMessage: $("#authMessage"),
-  signUp: $("#signUpBtn"),
+  forgotPassword: $("#forgotPasswordBtn"),
+  backToSignIn: $("#backToSignInBtn"),
   signOut: $("#signOutBtn"),
   profileName: $("#profileName"),
   profileEmail: $("#profileEmail"),
@@ -168,12 +185,107 @@ async function loadCloudState() {
 function showAuth(message = "") {
   els.authScreen.classList.remove("hidden");
   els.appShell.classList.add("hidden");
-  els.authMessage.textContent = message;
+  setAuthMessage(message);
 }
 
 function showApp() {
   els.authScreen.classList.add("hidden");
   els.appShell.classList.remove("hidden");
+}
+
+function setAuthMessage(message = "", type = "") {
+  els.authMessage.textContent = message;
+  els.authMessage.classList.toggle("error", type === "error");
+  els.authMessage.classList.toggle("success", type === "success");
+}
+
+function setAuthBusy(isBusy) {
+  authBusy = isBusy;
+  els.authSubmit.disabled = isBusy;
+  els.authSignInTab.disabled = isBusy;
+  els.authSignUpTab.disabled = isBusy;
+  els.forgotPassword.disabled = isBusy;
+  els.backToSignIn.disabled = isBusy;
+  els.authEmail.disabled = isBusy;
+  els.authPassword.disabled = isBusy;
+  els.authConfirmPassword.disabled = isBusy;
+}
+
+function isPasswordRecoveryUrl() {
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const query = new URLSearchParams(window.location.search);
+  return hash.get("type") === "recovery" || query.get("type") === "recovery";
+}
+
+function setAuthMode(mode, message = "", type = "") {
+  authMode = mode;
+  setAuthMessage(message, type);
+
+  const copy = {
+    signin: {
+      title: "Welcome back",
+      subtitle: "Sign in to continue.",
+      submit: "Sign in"
+    },
+    signup: {
+      title: "Create account",
+      subtitle: "Start syncing your conversations.",
+      submit: "Create account"
+    },
+    reset: {
+      title: "Reset password",
+      subtitle: "Send a recovery link to your email.",
+      submit: "Send reset link"
+    },
+    update: {
+      title: "Set new password",
+      subtitle: "Choose a new password for your account.",
+      submit: "Update password"
+    }
+  }[mode];
+
+  els.authTitle.textContent = copy.title;
+  els.authSubtitle.textContent = copy.subtitle;
+  els.authSubmit.textContent = copy.submit;
+
+  els.authTabs.classList.toggle("hidden", mode === "reset" || mode === "update");
+  els.authSignInTab.classList.toggle("active", mode === "signin");
+  els.authSignUpTab.classList.toggle("active", mode === "signup");
+  els.authEmailWrap.classList.toggle("hidden", mode === "update");
+  els.authPasswordWrap.classList.toggle("hidden", mode === "reset");
+  els.authConfirmWrap.classList.toggle("hidden", mode !== "signup" && mode !== "update");
+  els.forgotPassword.classList.toggle("hidden", mode !== "signin");
+  els.backToSignIn.classList.toggle("hidden", mode === "signin" || mode === "update");
+
+  els.authEmail.required = mode !== "update";
+  els.authPassword.required = mode !== "reset";
+  els.authConfirmPassword.required = mode === "signup" || mode === "update";
+  els.authPassword.autocomplete = mode === "signin" ? "current-password" : "new-password";
+  els.authConfirmPassword.value = "";
+
+  if (mode === "reset") {
+    els.authEmail.focus();
+  } else if (mode === "update") {
+    els.authPassword.focus();
+  }
+}
+
+function normalizedEmail() {
+  return els.authEmail.value.trim().toLowerCase();
+}
+
+function validatePasswordPair() {
+  const password = els.authPassword.value;
+  const confirm = els.authConfirmPassword.value;
+
+  if (password.length < 6) {
+    throw new Error("Password must be at least 6 characters.");
+  }
+  if ((authMode === "signup" || authMode === "update") && password !== confirm) {
+    throw new Error("Passwords do not match.");
+  }
+
+  return password;
 }
 
 function updateProfile() {
@@ -457,29 +569,55 @@ function applySidebarCollapsed() {
   els.sidebar.classList.toggle("collapsed", Boolean(state.settings.sidebarCollapsed));
 }
 
-async function handleSignIn(event) {
+async function handleAuthSubmit(event) {
   event.preventDefault();
-  els.authMessage.textContent = "Signing in...";
-  try {
-    const data = await signIn(els.authEmail.value.trim(), els.authPassword.value);
-    currentUser = data.user;
-    await enterApp();
-  } catch (error) {
-    els.authMessage.textContent = error.message;
-  }
-}
+  if (authBusy) return;
 
-async function handleSignUp() {
-  els.authMessage.textContent = "Creating account...";
+  setAuthBusy(true);
   try {
-    const data = await signUp(els.authEmail.value.trim(), els.authPassword.value);
-    currentUser = data.user;
-    els.authMessage.textContent = data.session
-      ? "Account created."
-      : "Account created. Check your email to confirm sign in.";
-    if (data.session) await enterApp();
+    if (authMode === "signin") {
+      setAuthMessage("Signing in...");
+      const data = await signIn(normalizedEmail(), els.authPassword.value);
+      currentUser = data.user;
+      await enterApp();
+      return;
+    }
+
+    if (authMode === "signup") {
+      const password = validatePasswordPair();
+      setAuthMessage("Creating account...");
+      const data = await signUp(normalizedEmail(), password);
+      currentUser = data.user;
+
+      if (data.session) {
+        await enterApp();
+      } else {
+        setAuthMode("signin", "Account created. Check your email before signing in.", "success");
+      }
+      return;
+    }
+
+    if (authMode === "reset") {
+      setAuthMessage("Sending reset link...");
+      await sendPasswordReset(normalizedEmail());
+      setAuthMode("signin", "Password reset link sent. Check your email.", "success");
+      return;
+    }
+
+    if (authMode === "update") {
+      const password = validatePasswordPair();
+      setAuthMessage("Updating password...");
+      await updatePassword(password);
+      const user = await getUser();
+      currentUser = user;
+      recoveryModeActive = false;
+      setAuthMessage("Password updated.", "success");
+      await enterApp();
+    }
   } catch (error) {
-    els.authMessage.textContent = error.message;
+    setAuthMessage(error.message, "error");
+  } finally {
+    setAuthBusy(false);
   }
 }
 
@@ -488,6 +626,7 @@ async function handleSignOut() {
     await signOut();
   } finally {
     currentUser = null;
+    setAuthMode("signin");
     showAuth();
   }
 }
@@ -500,8 +639,11 @@ async function enterApp() {
 }
 
 function bindEvents() {
-  els.authForm.addEventListener("submit", handleSignIn);
-  els.signUp.addEventListener("click", handleSignUp);
+  els.authForm.addEventListener("submit", handleAuthSubmit);
+  els.authSignInTab.addEventListener("click", () => setAuthMode("signin"));
+  els.authSignUpTab.addEventListener("click", () => setAuthMode("signup"));
+  els.forgotPassword.addEventListener("click", () => setAuthMode("reset"));
+  els.backToSignIn.addEventListener("click", () => setAuthMode("signin"));
   els.signOut.addEventListener("click", handleSignOut);
 
   $("#newChatBtn").onclick = newChat;
@@ -672,6 +814,9 @@ function exportCurrentChat() {
 
 async function bootstrap() {
   bindEvents();
+  setAuthMode("signin", "Checking session...");
+  const recoveryFromUrl = isPasswordRecoveryUrl();
+  recoveryModeActive = recoveryFromUrl;
 
   if (!availableModels.some(model => model.id === state.settings.model)) {
     state.settings.model = "gemini-3.6-flash";
@@ -684,17 +829,42 @@ async function bootstrap() {
     databaseReady = isDatabaseConfigured();
     currentUser = auth.user;
 
-    onAuthChange(async (_event, session) => {
+    onAuthChange(async (event, session) => {
       currentUser = session?.user || null;
+      if (event === "PASSWORD_RECOVERY") {
+        recoveryModeActive = true;
+        setAuthMode("update", "Enter a new password for your account.");
+        showAuth();
+        return;
+      }
+
+      if (recoveryModeActive && currentUser) {
+        setAuthMode("update", "Enter a new password for your account.");
+        showAuth();
+        return;
+      }
+
       if (currentUser) {
         await enterApp();
       } else if (authReady) {
         state = loadState();
+        setAuthMode("signin");
         showAuth();
       }
     });
 
+    if (authReady && recoveryFromUrl) {
+      if (currentUser) {
+        setAuthMode("update", "Enter a new password for your account.");
+      } else {
+        setAuthMode("reset", "Recovery link expired. Send a new reset link.", "error");
+      }
+      showAuth();
+      return;
+    }
+
     if (authReady && !currentUser) {
+      setAuthMode("signin");
       showAuth();
       return;
     }
