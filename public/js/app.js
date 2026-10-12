@@ -38,7 +38,7 @@ const $ = selector => document.querySelector(selector);
 let state = loadState();
 if (!state.activeChatId) state.activeChatId = state.chats[0].id;
 
-let controller = null;
+const streamControllers = new Map();
 let attachedContext = null;
 let currentUser = null;
 let authReady = false;
@@ -131,6 +131,14 @@ function current() {
   return activeChat(state);
 }
 
+function findChat(id) {
+  return state.chats.find(chat => chat.id === id) || null;
+}
+
+function isChatStreaming(id = state.activeChatId) {
+  return streamControllers.has(id);
+}
+
 function loadScopedState() {
   state = loadState(currentUser?.id || null);
   if (!state.activeChatId) state.activeChatId = state.chats[0].id;
@@ -221,6 +229,25 @@ function formatBytes(value) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function titleFromMessage(text = "") {
+  const title = String(text)
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return title.slice(0, 54) || "New conversation";
+}
+
+function ensureChatTitle(chat) {
+  if (!chat || (chat.title && chat.title !== "New conversation")) return false;
+
+  const firstUserMessage = chat.messages?.find(message => message.role === "user" && message.content?.trim());
+  if (!firstUserMessage) return false;
+
+  chat.title = titleFromMessage(firstUserMessage.content);
+  return true;
 }
 
 function isArtifactHeadingLine(line = "") {
@@ -512,12 +539,19 @@ function queueCloudSave(chat) {
   }, 500));
 }
 
-function save({ sync = true } = {}) {
-  state.chats.forEach(chat => {
-    if (chat.id === state.activeChatId) chat.updatedAt = Date.now();
-  });
+function abortAllStreams() {
+  streamControllers.forEach(controller => controller.abort());
+  streamControllers.clear();
+}
+
+function save({ sync = true, chat = current(), touch = true } = {}) {
+  const targetChat = chat?.id ? findChat(chat.id) : null;
+  if (touch && targetChat) {
+    targetChat.updatedAt = Date.now();
+  }
+
   saveState(state);
-  if (sync) queueCloudSave(current());
+  if (sync && targetChat) queueCloudSave(targetChat);
 }
 
 async function syncAllChatsToCloud() {
@@ -691,6 +725,12 @@ function applyTheme() {
 }
 
 function renderChatList() {
+  const renamedChats = state.chats.filter(ensureChatTitle);
+  if (renamedChats.length) {
+    saveState(state);
+    renamedChats.forEach(chat => queueCloudSave(chat));
+  }
+
   const query = $("#searchChats").value.toLowerCase();
   els.chatList.innerHTML = "";
   const filtered = state.chats
@@ -707,24 +747,32 @@ function renderChatList() {
 
   filtered.forEach(chat => {
     const row = document.createElement("div");
-    row.className = `chat-item ${chat.id === state.activeChatId ? "active" : ""}`;
-    row.innerHTML = `${icon("message", "chat-row-icon")}<span class="title"></span><button class="chat-delete" title="Delete chat" aria-label="Delete chat">${icon("x")}</button>`;
+    row.className = [
+      "chat-item",
+      chat.id === state.activeChatId ? "active" : "",
+      isChatStreaming(chat.id) ? "generating" : ""
+    ].filter(Boolean).join(" ");
+    row.innerHTML = `${icon("message", "chat-row-icon")}<span class="title"></span><span class="chat-status" title="Generating" aria-label="Generating"></span><button class="chat-delete" title="Delete chat" aria-label="Delete chat">${icon("x")}</button>`;
     row.querySelector(".title").textContent = chat.title;
     row.title = chat.title;
     row.addEventListener("click", event => {
       if (event.target.closest(".chat-delete")) return;
       state.activeChatId = chat.id;
       closeArtifactPanel();
-      save({ sync: false });
+      save({ sync: false, touch: false });
       renderAll();
       closeMobile();
     });
     row.querySelector(".chat-delete").addEventListener("click", async event => {
       event.stopPropagation();
       if (state.chats.length === 1) return;
+      streamControllers.get(chat.id)?.abort();
+      streamControllers.delete(chat.id);
+      clearTimeout(saveTimers.get(chat.id));
+      saveTimers.delete(chat.id);
       state.chats = state.chats.filter(item => item.id !== chat.id);
       if (state.activeChatId === chat.id) state.activeChatId = state.chats[0].id;
-      save({ sync: false });
+      save({ sync: false, touch: false });
       renderAll();
 
       try {
@@ -800,7 +848,9 @@ function renderMessages() {
     bubble.className = "bubble message-content";
 
     if (message.role === "assistant") {
-      renderAssistantBubble(bubble, message.content);
+      renderAssistantBubble(bubble, message.content, {
+        streaming: isChatStreaming(chat.id) && !message.content
+      });
     } else {
       bubble.innerHTML = attachmentMarkup(message.attachment) + `<p>${escapeHtml(message.content).replace(/\n/g, "<br>")}</p>`;
     }
@@ -821,6 +871,20 @@ function renderMessages() {
     els.messages.appendChild(article);
   });
 
+  els.messages.scrollTop = els.messages.scrollHeight;
+}
+
+function renderStreamingAssistant(chatId, assistant) {
+  if (state.activeChatId !== chatId) return;
+
+  const bubbles = els.messages.querySelectorAll(".message.assistant .message-content");
+  const bubble = bubbles[bubbles.length - 1];
+  if (!bubble) {
+    renderMessages();
+    return;
+  }
+
+  renderAssistantBubble(bubble, assistant.content, { streaming: true });
   els.messages.scrollTop = els.messages.scrollHeight;
 }
 
@@ -848,7 +912,7 @@ function newChat() {
   attachedContext = null;
   closeArtifactPanel();
   els.attachment.classList.add("hidden");
-  save({ sync: false });
+  save({ sync: false, touch: false });
   renderAll();
   els.composer.focus();
   closeMobile();
@@ -857,7 +921,10 @@ function newChat() {
 function autosize() {
   els.composer.style.height = "auto";
   els.composer.style.height = Math.min(els.composer.scrollHeight, 180) + "px";
-  els.send.disabled = !els.composer.value.trim() || Boolean(controller);
+  const streaming = isChatStreaming();
+  els.send.disabled = !els.composer.value.trim() || streaming;
+  els.stop.classList.toggle("hidden", !streaming);
+  els.send.classList.toggle("hidden", streaming);
 }
 
 function removeAttachment() {
@@ -870,9 +937,10 @@ function removeAttachment() {
 window.removeAttachment = removeAttachment;
 
 async function sendMessage(text = els.composer.value.trim()) {
-  if (!text || controller) return;
+  if (!text || isChatStreaming()) return;
 
   const chat = current();
+  const chatId = chat.id;
   const userMessage = { role: "user", content: text };
 
   if (attachedContext) {
@@ -887,27 +955,21 @@ async function sendMessage(text = els.composer.value.trim()) {
 
   chat.messages.push(userMessage);
 
-  if (chat.title === "New conversation") {
-    chat.title = text.replace(/\s+/g, " ").slice(0, 42) || "New conversation";
+  if (!chat.title || chat.title === "New conversation") {
+    chat.title = titleFromMessage(text);
   }
 
   els.composer.value = "";
   const currentAttachment = attachedContext;
   attachedContext = null;
   els.attachment.classList.add("hidden");
-  save();
-  renderAll();
 
   const assistant = { role: "assistant", content: "" };
   chat.messages.push(assistant);
-  renderMessages();
-
-  const article = els.messages.lastElementChild;
-  const bubble = article.querySelector(".message-content");
-  bubble.innerHTML = `<div class="typing"><i></i><i></i><i></i></div>`;
-  controller = new AbortController();
-  els.stop.classList.remove("hidden");
-  els.send.classList.add("hidden");
+  const controller = new AbortController();
+  streamControllers.set(chatId, controller);
+  save({ chat });
+  renderAll();
 
   const context = [
     state.settings.context,
@@ -925,13 +987,15 @@ async function sendMessage(text = els.composer.value.trim()) {
   try {
     await streamChat(chat.messages.slice(0, -1), context, controller.signal, (_, full) => {
       assistant.content = full;
-      renderAssistantBubble(bubble, full, { streaming: true });
-      els.messages.scrollTop = els.messages.scrollHeight;
+      chat.updatedAt = Date.now();
+      saveState(state);
+      renderStreamingAssistant(chatId, assistant);
     }, images, state.settings.model);
-    save();
-    renderMessages();
+    save({ chat });
+    if (state.activeChatId === chatId) renderMessages();
+    renderChatList();
     const artifacts = extractArtifacts(assistant.content);
-    if (artifacts.length) openArtifact(artifacts[0], artifacts);
+    if (artifacts.length && state.activeChatId === chatId) openArtifact(artifacts[0], artifacts);
     if (state.settings.voice === "on") speak(assistant.content);
   } catch (error) {
     if (error.name === "AbortError") {
@@ -942,12 +1006,12 @@ async function sendMessage(text = els.composer.value.trim()) {
         ? "**Error:** API quota exceeded. Wait a moment before trying again or check your Gemini usage limits."
         : `**Error:** ${error.message}`;
     }
-    save();
-    renderMessages();
+    save({ chat });
+    if (state.activeChatId === chatId) renderMessages();
+    renderChatList();
   } finally {
-    controller = null;
-    els.stop.classList.add("hidden");
-    els.send.classList.remove("hidden");
+    streamControllers.delete(chatId);
+    renderChatList();
     autosize();
   }
 }
@@ -1054,6 +1118,7 @@ async function handleResendConfirmation() {
 
 async function handleSignOut() {
   try {
+    abortAllStreams();
     await signOut();
   } finally {
     currentUser = null;
@@ -1093,7 +1158,7 @@ function bindEvents() {
 
   els.brand.onclick = () => {
     state.settings.sidebarCollapsed = !state.settings.sidebarCollapsed;
-    save({ sync: false });
+    save({ sync: false, touch: false });
     applySidebarCollapsed();
   };
 
@@ -1105,7 +1170,7 @@ function bindEvents() {
     }
   });
   els.send.onclick = () => sendMessage();
-  els.stop.onclick = () => controller?.abort();
+  els.stop.onclick = () => streamControllers.get(state.activeChatId)?.abort();
 
   document.querySelectorAll("[data-prompt]").forEach(button => {
     button.onclick = () => sendMessage(button.dataset.prompt);
@@ -1147,7 +1212,7 @@ function bindEvents() {
   els.modelMenu.querySelectorAll("[data-model]").forEach(button => {
     button.onclick = () => {
       state.settings.model = button.dataset.model;
-      save();
+      save({ sync: false, touch: false });
       renderAll();
       els.modelMenu.classList.add("hidden");
     };
@@ -1155,7 +1220,7 @@ function bindEvents() {
 
   $("#themeBtn").onclick = () => {
     state.settings.theme = state.settings.theme === "dark" ? "light" : "dark";
-    save({ sync: false });
+    save({ sync: false, touch: false });
     applyTheme();
   };
 
@@ -1166,7 +1231,7 @@ function bindEvents() {
     state.settings.theme = $("#appearanceSelect").value;
     state.settings.voice = $("#voiceSelect").value;
     state.settings.context = $("#systemContext").value.trim();
-    save();
+    save({ sync: false, touch: false });
     applyTheme();
     els.settings.close();
     renderAll();
