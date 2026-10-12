@@ -15,6 +15,7 @@ Add the key to your local `.env` file. Do not commit the real value:
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL=gemini-3.8-flash
+GEMINI_MAX_OUTPUT_TOKENS=16384
 ```
 
 The `.env.example` file contains only a safe placeholder and can be committed.

@@ -223,18 +223,91 @@ function formatBytes(value) {
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function extractArtifacts(content = "") {
+function isArtifactHeadingLine(line = "") {
+  const filenamePattern = "[A-Za-z0-9][A-Za-z0-9_./ -]*\\.[A-Za-z0-9]{1,8}";
+  return new RegExp(`^(?:#{1,6}\\s*)?(?:(?:file|filename|path)\\s*[:\\-]\\s*)?\`?${filenamePattern}\`?\\s*$`, "i")
+    .test(line.trim());
+}
+
+function previousLine(content, index) {
+  const lineEnd = content.lastIndexOf("\n", Math.max(0, index - 1));
+  if (lineEnd === -1) return null;
+  const lineStart = content.lastIndexOf("\n", Math.max(0, lineEnd - 1)) + 1;
+  return {
+    start: lineStart,
+    end: lineEnd + 1,
+    text: content.slice(lineStart, lineEnd)
+  };
+}
+
+function artifactBlockStart(content, fenceStart) {
+  let cursor = fenceStart;
+
+  for (let i = 0; i < 3; i += 1) {
+    const line = previousLine(content, cursor);
+    if (!line) break;
+
+    if (!line.text.trim()) {
+      cursor = line.start;
+      continue;
+    }
+
+    if (isArtifactHeadingLine(line.text)) return line.start;
+    break;
+  }
+
+  return fenceStart;
+}
+
+function removeRanges(content, ranges) {
+  if (!ranges.length) return content;
+
+  let output = "";
+  let cursor = 0;
+  ranges.sort((a, b) => a.start - b.start).forEach(range => {
+    output += content.slice(cursor, range.start);
+    cursor = Math.max(cursor, range.end);
+  });
+
+  return `${output}${content.slice(cursor)}`
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function parseArtifacts(content = "") {
   const artifacts = [];
-  const pattern = /```([\w.+#-]*)\n?([\s\S]*?)```/g;
+  const ranges = [];
+  const pattern = /```([\w.+#-]*)[^\S\r\n]*(?:\r?\n)?/g;
   let match;
 
   while ((match = pattern.exec(content)) !== null) {
     const language = (match[1] || "code").toLowerCase();
-    const code = match[2].trimEnd();
-    if (!code.trim()) continue;
+    const codeStart = pattern.lastIndex;
+    const closeIndex = content.indexOf("```", codeStart);
+    const complete = closeIndex !== -1;
+    const codeEnd = complete ? closeIndex : content.length;
+    let code = content.slice(codeStart, codeEnd).trimEnd();
+    let end = complete ? closeIndex + 3 : content.length;
+
+    if (!complete) {
+      const note = code.match(/\n{2,}---\n_[\s\S]*$/);
+      if (note) {
+        code = code.slice(0, note.index).trimEnd();
+        end = codeStart + note.index;
+      }
+    }
+
+    if (!code.trim()) {
+      pattern.lastIndex = complete ? closeIndex + 3 : content.length;
+      if (!complete) break;
+      continue;
+    }
 
     const name = inferArtifactName(content.slice(0, match.index), language, artifacts.length);
     const extension = fileExtension(name) || languageExtension(language);
+    const start = artifactBlockStart(content, match.index);
+
     artifacts.push({
       id: `${artifacts.length}-${name}`,
       name,
@@ -242,11 +315,28 @@ function extractArtifacts(content = "") {
       language,
       extension,
       code,
-      bytes: new TextEncoder().encode(code).length
+      bytes: new TextEncoder().encode(code).length,
+      incomplete: !complete
     });
+    ranges.push({ start, end });
+
+    pattern.lastIndex = complete ? end : content.length;
+    if (!complete) break;
   }
 
-  return artifacts;
+  return {
+    artifacts,
+    displayContent: removeRanges(content, ranges)
+  };
+}
+
+function extractArtifacts(content = "") {
+  return parseArtifacts(content).artifacts;
+}
+
+function artifactMetaText(artifact) {
+  const partial = artifact.incomplete ? " - partial" : "";
+  return `${artifactLabel(artifact)} - ${formatBytes(artifact.bytes)}${partial}`;
 }
 
 function canPreviewArtifact(artifact, group = []) {
@@ -326,7 +416,7 @@ function renderArtifactPanel() {
   artifactView = previewable ? artifactView : "code";
   els.artifactPanel.classList.remove("hidden");
   els.artifactTitle.textContent = activeArtifact.name;
-  els.artifactMeta.textContent = `${artifactLabel(activeArtifact)} - ${formatBytes(activeArtifact.bytes)}`;
+  els.artifactMeta.textContent = artifactMetaText(activeArtifact);
   els.artifactPreviewTab.disabled = !previewable;
   els.artifactPreviewTab.classList.toggle("active", artifactView === "preview");
   els.artifactCodeTab.classList.toggle("active", artifactView === "code");
@@ -362,7 +452,7 @@ function createArtifactCards(artifacts) {
     card.innerHTML = `
       <button class="artifact-card-main" type="button">
         <span class="artifact-card-icon">${icon(["html", "htm", "svg"].includes(artifact.extension) ? "eye" : "code")}</span>
-        <span><strong></strong><small>${escapeHtml(artifactLabel(artifact))} - ${formatBytes(artifact.bytes)}</small></span>
+        <span><strong></strong><small>${escapeHtml(artifactMetaText(artifact))}</small></span>
       </button>
       <button class="artifact-card-download" type="button" title="Download ${escapeHtml(artifact.downloadName)}" aria-label="Download ${escapeHtml(artifact.downloadName)}">${icon("download")}</button>
     `;
@@ -674,6 +764,29 @@ function attachmentMarkup(attachment) {
   `;
 }
 
+function bindCodeCopyButtons(root) {
+  root.querySelectorAll("[data-copy-code]").forEach(button => {
+    button.addEventListener("click", async () => {
+      await navigator.clipboard?.writeText(decodeURIComponent(button.dataset.copyCode));
+      button.textContent = "Copied";
+      setTimeout(() => button.textContent = "Copy", 1000);
+    });
+  });
+}
+
+function renderAssistantBubble(bubble, content, { streaming = false } = {}) {
+  const { artifacts, displayContent } = parseArtifacts(content);
+  const rendered = renderMarkdown(displayContent);
+  bubble.innerHTML = rendered || (streaming ? `<div class="typing"><i></i><i></i><i></i></div>` : "");
+
+  if (artifacts.length) {
+    bubble.insertBefore(createArtifactCards(artifacts), bubble.firstChild);
+  }
+
+  bindCodeCopyButtons(bubble);
+  return artifacts;
+}
+
 function renderMessages() {
   const chat = current();
   els.messages.innerHTML = "";
@@ -682,18 +795,14 @@ function renderMessages() {
   chat.messages.forEach(message => {
     const article = document.createElement("article");
     article.className = `message ${message.role}`;
-    const artifacts = message.role === "assistant" ? extractArtifacts(message.content) : [];
 
     const bubble = document.createElement("div");
     bubble.className = "bubble message-content";
-    bubble.innerHTML = attachmentMarkup(message.attachment) + (
-      message.role === "assistant"
-        ? renderMarkdown(message.content)
-        : `<p>${escapeHtml(message.content).replace(/\n/g, "<br>")}</p>`
-    );
 
-    if (artifacts.length) {
-      bubble.insertBefore(createArtifactCards(artifacts), bubble.firstChild);
+    if (message.role === "assistant") {
+      renderAssistantBubble(bubble, message.content);
+    } else {
+      bubble.innerHTML = attachmentMarkup(message.attachment) + `<p>${escapeHtml(message.content).replace(/\n/g, "<br>")}</p>`;
     }
 
     if (message.role === "assistant") {
@@ -704,14 +813,6 @@ function renderMessages() {
       actions.querySelector("[data-speak]")?.addEventListener("click", () => speak(message.content));
       bubble.appendChild(actions);
     }
-
-    bubble.querySelectorAll("[data-copy-code]").forEach(button => {
-      button.addEventListener("click", async () => {
-        await navigator.clipboard?.writeText(decodeURIComponent(button.dataset.copyCode));
-        button.textContent = "Copied";
-        setTimeout(() => button.textContent = "Copy", 1000);
-      });
-    });
 
     if (message.role === "assistant") {
       article.innerHTML = `<div class="message-avatar">${icon("bot")}</div>`;
@@ -824,7 +925,7 @@ async function sendMessage(text = els.composer.value.trim()) {
   try {
     await streamChat(chat.messages.slice(0, -1), context, controller.signal, (_, full) => {
       assistant.content = full;
-      bubble.innerHTML = renderMarkdown(full) || `<div class="typing"><i></i><i></i><i></i></div>`;
+      renderAssistantBubble(bubble, full, { streaming: true });
       els.messages.scrollTop = els.messages.scrollHeight;
     }, images, state.settings.model);
     save();

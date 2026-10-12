@@ -99,7 +99,7 @@ Edit `.env` and add your keys:
 GEMINI_API_KEY=your_gemini_api_key_here
 PORT=3000
 GEMINI_MODEL=gemini-3.8-flash
-GEMINI_MAX_OUTPUT_TOKENS=8192
+GEMINI_MAX_OUTPUT_TOKENS=16384
 GEMINI_RETRY_ATTEMPTS=3
 
 SUPABASE_URL=https://your-project.supabase.co
@@ -162,7 +162,7 @@ $env:HOST="0.0.0.0"; npm start
 | --- | --- | --- | --- |
 | `GEMINI_API_KEY` | Yes | none | Gemini API key used by the backend |
 | `GEMINI_MODEL` | No | `gemini-3.8-flash` | Default Gemini model for chat requests |
-| `GEMINI_MAX_OUTPUT_TOKENS` | No | `8192` | Maximum Gemini output tokens for longer code/file generations |
+| `GEMINI_MAX_OUTPUT_TOKENS` | No | `16384` | Maximum Gemini output tokens for longer code/file generations; values are clamped between `4096` and `32768` |
 | `GEMINI_RETRY_ATTEMPTS` | No | `3` | Retry attempts for temporary Gemini overload/high-demand errors before moving to fallback models |
 | `GEMINI_RETRY_BASE_DELAY_MS` | No | `900` | Initial retry delay in milliseconds; later retries use exponential backoff |
 | `SUPABASE_URL` | Yes for login | none | Supabase project URL |
@@ -206,7 +206,7 @@ Set these environment variables in your hosting dashboard:
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL=gemini-3.8-flash
-GEMINI_MAX_OUTPUT_TOKENS=8192
+GEMINI_MAX_OUTPUT_TOKENS=16384
 GEMINI_RETRY_ATTEMPTS=3
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_PUBLISHABLE_KEY=sb_publishable_your_key_here

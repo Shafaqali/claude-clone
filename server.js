@@ -17,7 +17,10 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const DEFAULT_MODEL = "gemini-3.8-flash";
 const MODEL = process.env.GEMINI_MODEL || DEFAULT_MODEL;
-const GENERATION_MAX_OUTPUT_TOKENS = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 8192);
+const maxOutputTokens = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS);
+const GENERATION_MAX_OUTPUT_TOKENS = Number.isFinite(maxOutputTokens)
+  ? Math.min(32768, Math.max(4096, maxOutputTokens))
+  : 16384;
 const retryAttempts = Number(process.env.GEMINI_RETRY_ATTEMPTS);
 const retryBaseDelay = Number(process.env.GEMINI_RETRY_BASE_DELAY_MS);
 const GEMINI_RETRY_ATTEMPTS = Number.isFinite(retryAttempts)
