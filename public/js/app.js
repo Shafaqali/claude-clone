@@ -46,7 +46,34 @@ let authMode = "signin";
 let authBusy = false;
 let recoveryModeActive = false;
 let lastConfirmationEmail = "";
+let activeArtifact = null;
+let activeArtifactGroup = [];
+let artifactView = "preview";
 const saveTimers = new Map();
+const LANG_EXTENSIONS = {
+  bash: "sh",
+  csharp: "cs",
+  css: "css",
+  html: "html",
+  javascript: "js",
+  js: "js",
+  json: "json",
+  jsx: "jsx",
+  markdown: "md",
+  md: "md",
+  php: "php",
+  python: "py",
+  py: "py",
+  shell: "sh",
+  sql: "sql",
+  ts: "ts",
+  tsx: "tsx",
+  typescript: "ts",
+  xml: "xml",
+  yaml: "yml",
+  yml: "yml"
+};
+const PREVIEW_EXTENSIONS = new Set(["html", "htm", "svg", "md", "markdown"]);
 
 const els = {
   appShell: $("#appShell"),
@@ -85,7 +112,18 @@ const els = {
   modelMenu: $("#modelMenu"),
   modelName: $("#modelName"),
   toolPopover: $("#toolPopover"),
-  brand: $("#brandButton")
+  brand: $("#brandButton"),
+  artifactPanel: $("#artifactPanel"),
+  artifactTitle: $("#artifactTitle"),
+  artifactMeta: $("#artifactMeta"),
+  artifactDownload: $("#artifactDownloadBtn"),
+  artifactCopy: $("#artifactCopyBtn"),
+  artifactClose: $("#artifactCloseBtn"),
+  artifactPreviewTab: $("#artifactPreviewTab"),
+  artifactCodeTab: $("#artifactCodeTab"),
+  artifactPreview: $("#artifactPreview"),
+  artifactCode: $("#artifactCode"),
+  artifactEmpty: $("#artifactEmpty")
 };
 
 function current() {
@@ -105,6 +143,238 @@ function escapeHtml(value) {
     '"': "&quot;",
     "'": "&#039;"
   }[c]));
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function fileExtension(name = "") {
+  const clean = name.split(/[?#]/)[0];
+  const match = clean.match(/\.([a-z0-9]+)$/i);
+  return match ? match[1].toLowerCase() : "";
+}
+
+function languageExtension(language = "") {
+  return LANG_EXTENSIONS[language.toLowerCase()] || "txt";
+}
+
+function sanitizeArtifactName(name = "") {
+  return String(name)
+    .trim()
+    .replace(/^[-*#\s`"'[\]()]+/, "")
+    .replace(/[`"'[\]()]+$/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/[<>:"|?*]/g, "")
+    .slice(0, 120);
+}
+
+function inferArtifactName(before, language, index) {
+  const context = before.split("\n").slice(-8).join("\n");
+  const filenamePattern = "([A-Za-z0-9][A-Za-z0-9_./ -]*\\.[A-Za-z0-9]{1,8})";
+  const direct = context.match(new RegExp(`(?:^|\\n)\\s*(?:#{1,6}\\s*)?\\\`?${filenamePattern}\\\`?\\s*$`, "i"));
+  const labeled = context.match(new RegExp(`(?:file|filename|path)\\s*[:\\-]\\s*\\\`?${filenamePattern}\\\`?`, "i"));
+  const found = sanitizeArtifactName((labeled || direct)?.[1] || "");
+  if (found) return found;
+
+  const ext = languageExtension(language);
+  if (ext === "html" && index === 0) return "index.html";
+  if (ext === "css" && index <= 1) return "styles.css";
+  if (ext === "js" && index <= 2) return "script.js";
+  return `artifact-${index + 1}.${ext}`;
+}
+
+function artifactLabel(artifact) {
+  const ext = artifact.extension || fileExtension(artifact.name);
+  const labels = {
+    css: "Stylesheet",
+    html: "HTML",
+    htm: "HTML",
+    js: "JavaScript",
+    json: "JSON",
+    jsx: "React",
+    md: "Markdown",
+    py: "Python",
+    svg: "SVG",
+    ts: "TypeScript",
+    tsx: "React TS"
+  };
+  return labels[ext] || (artifact.language ? artifact.language.toUpperCase() : "Code");
+}
+
+function artifactMime(artifact) {
+  const ext = artifact.extension;
+  return {
+    css: "text/css",
+    html: "text/html",
+    htm: "text/html",
+    js: "text/javascript",
+    json: "application/json",
+    md: "text/markdown",
+    svg: "image/svg+xml",
+    txt: "text/plain"
+  }[ext] || "text/plain";
+}
+
+function formatBytes(value) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function extractArtifacts(content = "") {
+  const artifacts = [];
+  const pattern = /```([\w.+#-]*)\n?([\s\S]*?)```/g;
+  let match;
+
+  while ((match = pattern.exec(content)) !== null) {
+    const language = (match[1] || "code").toLowerCase();
+    const code = match[2].trimEnd();
+    if (!code.trim()) continue;
+
+    const name = inferArtifactName(content.slice(0, match.index), language, artifacts.length);
+    const extension = fileExtension(name) || languageExtension(language);
+    artifacts.push({
+      id: `${artifacts.length}-${name}`,
+      name,
+      downloadName: name.split(/[\\/]/).pop() || name,
+      language,
+      extension,
+      code,
+      bytes: new TextEncoder().encode(code).length
+    });
+  }
+
+  return artifacts;
+}
+
+function canPreviewArtifact(artifact, group = []) {
+  if (!artifact) return false;
+  if (PREVIEW_EXTENSIONS.has(artifact.extension)) return true;
+  return Boolean(group.some(item => ["html", "htm"].includes(item.extension)));
+}
+
+function injectArtifactsIntoHtml(html, artifacts) {
+  let output = html;
+  const styles = artifacts
+    .filter(item => item.extension === "css")
+    .map(item => `<style data-artifact="${escapeHtml(item.name)}">\n${item.code.replace(/<\/style/gi, "<\\/style")}\n</style>`)
+    .join("\n");
+  const scripts = artifacts
+    .filter(item => ["js", "jsx", "ts", "tsx"].includes(item.extension))
+    .map(item => `<script data-artifact="${escapeHtml(item.name)}">\n${item.code.replace(/<\/script/gi, "<\\/script")}\n</script>`)
+    .join("\n");
+
+  artifacts.filter(item => item.extension === "css").forEach(item => {
+    const names = [item.name, item.downloadName].filter(Boolean).map(escapeRegExp).join("|");
+    if (names) {
+      output = output.replace(new RegExp(`<link[^>]+href=["'][^"']*(?:${names})["'][^>]*>`, "gi"), "");
+    }
+  });
+
+  artifacts.filter(item => ["js", "jsx", "ts", "tsx"].includes(item.extension)).forEach(item => {
+    const names = [item.name, item.downloadName].filter(Boolean).map(escapeRegExp).join("|");
+    if (names) {
+      output = output.replace(new RegExp(`<script[^>]+src=["'][^"']*(?:${names})["'][^>]*>\\s*</script>`, "gi"), "");
+    }
+  });
+
+  output = /<\/head>/i.test(output) ? output.replace(/<\/head>/i, `${styles}\n</head>`) : `${styles}\n${output}`;
+  output = /<\/body>/i.test(output) ? output.replace(/<\/body>/i, `${scripts}\n</body>`) : `${output}\n${scripts}`;
+  return output;
+}
+
+function buildPreviewDocument(artifact, group = []) {
+  const htmlArtifact = ["html", "htm"].includes(artifact.extension)
+    ? artifact
+    : group.find(item => ["html", "htm"].includes(item.extension));
+
+  if (htmlArtifact) {
+    return injectArtifactsIntoHtml(htmlArtifact.code, group);
+  }
+
+  if (artifact.extension === "svg") {
+    return `<!doctype html><html><body style="margin:0;display:grid;place-items:center;min-height:100vh;background:#fff">${artifact.code}</body></html>`;
+  }
+
+  if (["md", "markdown"].includes(artifact.extension)) {
+    return `<!doctype html><html><head><meta charset="utf-8"><style>body{font:15px/1.6 system-ui;margin:32px;max-width:760px}code,pre{background:#f2f4f5;padding:2px 4px;border-radius:4px}pre{padding:14px;overflow:auto}</style></head><body>${renderMarkdown(artifact.code)}</body></html>`;
+  }
+
+  return "";
+}
+
+function downloadArtifact(artifact) {
+  const blob = new Blob([artifact.code], { type: artifactMime(artifact) });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = artifact.downloadName;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function renderArtifactPanel() {
+  if (!activeArtifact) {
+    els.artifactPanel.classList.add("hidden");
+    els.artifactPreview.srcdoc = "";
+    return;
+  }
+
+  const previewable = canPreviewArtifact(activeArtifact, activeArtifactGroup);
+  artifactView = previewable ? artifactView : "code";
+  els.artifactPanel.classList.remove("hidden");
+  els.artifactTitle.textContent = activeArtifact.name;
+  els.artifactMeta.textContent = `${artifactLabel(activeArtifact)} - ${formatBytes(activeArtifact.bytes)}`;
+  els.artifactPreviewTab.disabled = !previewable;
+  els.artifactPreviewTab.classList.toggle("active", artifactView === "preview");
+  els.artifactCodeTab.classList.toggle("active", artifactView === "code");
+  els.artifactCode.textContent = activeArtifact.code;
+
+  const showPreview = artifactView === "preview" && previewable;
+  els.artifactPreview.classList.toggle("hidden", !showPreview);
+  els.artifactCode.classList.toggle("hidden", artifactView !== "code");
+  els.artifactEmpty.classList.toggle("hidden", artifactView !== "preview" || previewable);
+  els.artifactPreview.srcdoc = showPreview ? buildPreviewDocument(activeArtifact, activeArtifactGroup) : "";
+}
+
+function openArtifact(artifact, group = [artifact]) {
+  activeArtifact = artifact;
+  activeArtifactGroup = group;
+  artifactView = canPreviewArtifact(artifact, group) ? "preview" : "code";
+  renderArtifactPanel();
+}
+
+function closeArtifactPanel() {
+  activeArtifact = null;
+  activeArtifactGroup = [];
+  renderArtifactPanel();
+}
+
+function createArtifactCards(artifacts) {
+  const wrap = document.createElement("div");
+  wrap.className = "artifact-cards";
+
+  artifacts.forEach(artifact => {
+    const card = document.createElement("div");
+    card.className = "artifact-card";
+    card.innerHTML = `
+      <button class="artifact-card-main" type="button">
+        <span class="artifact-card-icon">${icon(["html", "htm", "svg"].includes(artifact.extension) ? "eye" : "code")}</span>
+        <span><strong></strong><small>${escapeHtml(artifactLabel(artifact))} - ${formatBytes(artifact.bytes)}</small></span>
+      </button>
+      <button class="artifact-card-download" type="button" title="Download ${escapeHtml(artifact.downloadName)}" aria-label="Download ${escapeHtml(artifact.downloadName)}">${icon("download")}</button>
+    `;
+    card.querySelector("strong").textContent = artifact.name;
+    card.querySelector(".artifact-card-main").addEventListener("click", () => openArtifact(artifact, artifacts));
+    card.querySelector(".artifact-card-download").addEventListener("click", event => {
+      event.stopPropagation();
+      downloadArtifact(artifact);
+    });
+    wrap.appendChild(card);
+  });
+
+  return wrap;
 }
 
 function cleanChatForCloud(chat) {
@@ -192,6 +462,7 @@ async function loadCloudState() {
 }
 
 function showAuth(message = "") {
+  closeArtifactPanel();
   els.authScreen.classList.remove("hidden");
   els.appShell.classList.add("hidden");
   setAuthMessage(message);
@@ -352,6 +623,7 @@ function renderChatList() {
     row.addEventListener("click", event => {
       if (event.target.closest(".chat-delete")) return;
       state.activeChatId = chat.id;
+      closeArtifactPanel();
       save({ sync: false });
       renderAll();
       closeMobile();
@@ -409,6 +681,7 @@ function renderMessages() {
   chat.messages.forEach(message => {
     const article = document.createElement("article");
     article.className = `message ${message.role}`;
+    const artifacts = message.role === "assistant" ? extractArtifacts(message.content) : [];
 
     const bubble = document.createElement("div");
     bubble.className = "bubble message-content";
@@ -417,6 +690,10 @@ function renderMessages() {
         ? renderMarkdown(message.content)
         : `<p>${escapeHtml(message.content).replace(/\n/g, "<br>")}</p>`
     );
+
+    if (artifacts.length) {
+      bubble.insertBefore(createArtifactCards(artifacts), bubble.firstChild);
+    }
 
     if (message.role === "assistant") {
       const actions = document.createElement("div");
@@ -467,6 +744,7 @@ function newChat() {
   state.chats.unshift(chat);
   state.activeChatId = chat.id;
   attachedContext = null;
+  closeArtifactPanel();
   els.attachment.classList.add("hidden");
   save({ sync: false });
   renderAll();
@@ -550,6 +828,8 @@ async function sendMessage(text = els.composer.value.trim()) {
     }, images, state.settings.model);
     save();
     renderMessages();
+    const artifacts = extractArtifacts(assistant.content);
+    if (artifacts.length) openArtifact(artifacts[0], artifacts);
     if (state.settings.voice === "on") speak(assistant.content);
   } catch (error) {
     if (error.name === "AbortError") {
@@ -677,6 +957,7 @@ async function handleSignOut() {
     currentUser = null;
     setStateScope(null);
     state = loadState(null);
+    closeArtifactPanel();
     setAuthMode("signin");
     showAuth();
   }
@@ -790,6 +1071,24 @@ function bindEvents() {
   };
 
   $("#exportBtn").onclick = exportCurrentChat;
+  els.artifactClose.onclick = closeArtifactPanel;
+  els.artifactDownload.onclick = () => {
+    if (activeArtifact) downloadArtifact(activeArtifact);
+  };
+  els.artifactCopy.onclick = async () => {
+    if (!activeArtifact) return;
+    await navigator.clipboard?.writeText(activeArtifact.code);
+    els.artifactCopy.title = "Copied";
+    setTimeout(() => els.artifactCopy.title = "Copy code", 900);
+  };
+  els.artifactPreviewTab.onclick = () => {
+    artifactView = "preview";
+    renderArtifactPanel();
+  };
+  els.artifactCodeTab.onclick = () => {
+    artifactView = "code";
+    renderArtifactPanel();
+  };
 
   document.addEventListener("click", event => {
     if (!event.target.closest(".model-picker")) els.modelMenu.classList.add("hidden");

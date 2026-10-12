@@ -13,6 +13,7 @@ The app runs locally, serves a responsive chat UI, supports PWA installation, st
 - Server-side API key handling through `.env`
 - Local browser fallback when Supabase is not configured
 - Markdown rendering for assistant responses and code blocks
+- Claude-style code artifacts with side-by-side preview, code view, copy, and download
 - File uploads for text files and images
 - Image attachments sent to Gemini as inline multimodal input
 - Voice input and optional read-aloud support through browser speech APIs
@@ -159,6 +160,7 @@ $env:HOST="0.0.0.0"; npm start
 | --- | --- | --- | --- |
 | `GEMINI_API_KEY` | Yes | none | Gemini API key used by the backend |
 | `GEMINI_MODEL` | No | `gemini-3.6-flash` | Default Gemini model for chat requests |
+| `GEMINI_MAX_OUTPUT_TOKENS` | No | `8192` | Maximum Gemini output tokens for longer code/file generations |
 | `SUPABASE_URL` | Yes for login | none | Supabase project URL |
 | `SUPABASE_PUBLISHABLE_KEY` | Yes for login | none | Browser-safe Supabase publishable key |
 | `SUPABASE_SECRET_KEY` | Yes for database sync | none | Server-only Supabase secret key |

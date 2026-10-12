@@ -1,4 +1,4 @@
-const CACHE_NAME = 'claude-ai-v4';
+const CACHE_NAME = 'claude-ai-v5';
 const APP_SHELL = [
   '/',
   '/manifest.json',

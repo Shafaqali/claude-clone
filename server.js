@@ -16,6 +16,7 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+const GENERATION_MAX_OUTPUT_TOKENS = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 8192);
 const FALLBACK_MODELS = [MODEL, "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"]
   .filter((model, index, models) => models.indexOf(model) === index);
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
@@ -162,10 +163,15 @@ You are running inside a private Claude-inspired application. Do not claim to be
 Use Markdown for readable answers. For programming requests, provide practical, complete code and explain important decisions.
 
 When users ask you to create files:
-1. Provide the complete file content
-2. Use appropriate syntax and formatting
-3. Include helpful comments where needed
-4. You can create any type of text file (code, config, documentation, etc.)
+1. Prefer complete, working files over partial snippets.
+2. Use this artifact format for every generated file:
+   ### \`filename.ext\`
+   \`\`\`language
+   complete file content
+   \`\`\`
+3. Include all files needed to run the result, such as index.html, styles.css, script.js, README.md, package.json, or config files.
+4. Do not stop inside a code block. If the request is too large, create a smaller complete version first and then explain what can be expanded next.
+5. Use appropriate syntax and formatting, with helpful comments only where they add clarity.
 
 If the user asks you to perform an action you cannot actually perform, clearly say so instead of pretending.
 
@@ -340,6 +346,7 @@ app.get("/api/health", (req, res) => {
     ok: true,
     configured: Boolean(process.env.GEMINI_API_KEY),
     model: MODEL,
+    maxOutputTokens: GENERATION_MAX_OUTPUT_TOKENS,
     availableModels: availableModels,
     supabase: {
       configured: SUPABASE_AUTH_CONFIGURED,
@@ -443,7 +450,11 @@ app.post("/api/chat", async (req, res) => {
       console.log(`Trying model: ${testModel}`);
       const model = client.getGenerativeModel({
         model: testModel,
-        systemInstruction: systemPrompt(context)
+        systemInstruction: systemPrompt(context),
+        generationConfig: {
+          maxOutputTokens: GENERATION_MAX_OUTPUT_TOKENS,
+          temperature: 0.55
+        }
       });
 
       const history = cleanHistory(messages.slice(0, -1));
@@ -483,6 +494,16 @@ app.post("/api/chat", async (req, res) => {
         const text = chunk.text();
         if (text) res.write(text);
       }
+
+      const response = await result.response;
+      const finishReason = response?.candidates?.[0]?.finishReason;
+      if (finishReason && !["STOP", "FINISH_REASON_UNSPECIFIED"].includes(finishReason)) {
+        const limitNote = finishReason === "MAX_TOKENS"
+          ? "\n\n---\n_Generation reached the model output limit. Ask me to continue and I will continue from the last complete file._"
+          : `\n\n---\n_Generation stopped with finish reason: ${finishReason}._`;
+        res.write(limitNote);
+      }
+
       res.end();
       return; // Success! Exit the function
       

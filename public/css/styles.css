@@ -118,6 +118,28 @@ button{cursor:pointer;color:inherit}
 .model-menu small{display:block;color:var(--muted);font-size:10px;margin-top:2px}
 .topbar-actions{margin-left:auto;display:flex;gap:2px}
 
+.artifact-panel{height:100%;width:min(46vw,760px);min-width:420px;border-left:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column;box-shadow:-18px 0 45px rgba(24,34,45,.08);z-index:12}
+.artifact-head{min-height:56px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px}
+.artifact-title-wrap{display:flex;align-items:center;gap:10px;min-width:0}
+.artifact-title-wrap>div:last-child{min-width:0}
+.artifact-title-wrap strong{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px}
+.artifact-title-wrap small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+.artifact-icon{width:32px;height:32px;border-radius:8px;background:var(--surface-2);color:var(--accent);display:grid;place-items:center;flex-shrink:0}
+.artifact-icon .svg-icon{width:17px;height:17px}
+.artifact-head-actions{display:flex;align-items:center;gap:2px;flex-shrink:0}
+.artifact-tabs{height:42px;display:flex;align-items:center;gap:4px;border-bottom:1px solid var(--border);padding:5px 8px;background:var(--surface-2)}
+.artifact-tabs button{height:30px;border:0;border-radius:7px;background:transparent;color:var(--muted);display:flex;align-items:center;gap:7px;padding:0 10px;font-size:12px;font-weight:700}
+.artifact-tabs button:hover{background:var(--surface);color:var(--text)}
+.artifact-tabs button.active{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.artifact-tabs button:disabled{opacity:.45;cursor:default}
+.artifact-tabs .svg-icon{width:15px;height:15px}
+.artifact-body{position:relative;flex:1;min-height:0;background:var(--bg)}
+.artifact-preview{width:100%;height:100%;border:0;background:#fff}
+.artifact-code{height:100%;margin:0;padding:16px;overflow:auto;background:var(--code);color:var(--code-text);font:12.5px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap}
+.artifact-empty{height:100%;display:grid;place-items:center;text-align:center;padding:24px;color:var(--muted)}
+.artifact-empty strong{display:block;color:var(--text);margin-bottom:6px}
+.artifact-empty p{margin:0;font-size:13px}
+
 .chat-view{flex:1;overflow:auto}
 .welcome{min-height:100%;max-width:760px;margin:auto;padding:11vh 25px 40px;text-align:center}
 .welcome-orb{width:54px;height:54px;border-radius:8px;margin:0 auto 20px;background:var(--accent);color:var(--accent-text);display:grid;place-items:center;font-size:22px;font-weight:700;font-family:var(--font-display);box-shadow:0 10px 32px var(--accent-soft)}
@@ -147,6 +169,19 @@ button{cursor:pointer;color:inherit}
 .message-attachment small{display:block;color:var(--muted);font-size:11px;word-break:break-word}
 .file-chip{width:38px;height:38px;border-radius:8px;background:var(--accent);color:var(--accent-text);display:grid;place-items:center;font-size:11px;font-weight:700;flex-shrink:0}
 .file-chip .svg-icon{width:19px;height:19px}
+
+.artifact-cards{display:grid;gap:8px;margin:0 0 14px}
+.artifact-card{border:1px solid var(--border);border-radius:8px;background:var(--surface);display:flex;align-items:center;min-height:62px;overflow:hidden}
+.artifact-card-main{border:0;background:transparent;display:flex;align-items:center;gap:11px;min-width:0;flex:1;text-align:left;padding:10px 12px}
+.artifact-card-main>span:last-child{min-width:0}
+.artifact-card-main:hover{background:var(--surface-2)}
+.artifact-card-main strong{display:block;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.artifact-card-main small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+.artifact-card-icon{width:34px;height:34px;border-radius:8px;background:var(--surface-2);color:var(--accent);display:grid;place-items:center;flex-shrink:0}
+.artifact-card-icon .svg-icon{width:17px;height:17px}
+.artifact-card-download{align-self:stretch;width:44px;border:0;border-left:1px solid var(--border);background:transparent;color:var(--muted);display:grid;place-items:center;flex-shrink:0}
+.artifact-card-download:hover{background:var(--surface-2);color:var(--text)}
+.artifact-card-download .svg-icon{width:17px;height:17px}
 
 .code-wrap{margin:14px 0;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--code)}
 .code-head{height:32px;background:rgba(255,255,255,.05);display:flex;align-items:center;padding:0 10px;color:#a9a69c;font-size:11px}
@@ -234,4 +269,9 @@ button{cursor:pointer;color:inherit}
   .suggestions{grid-template-columns:1fr}
   .message.user .bubble{max-width:88%}
   .tool-popover{left:15px}
+}
+
+@media(max-width:1100px){
+  .artifact-panel{position:fixed;inset:0 0 0 auto;width:min(760px,100vw);min-width:0;z-index:55;box-shadow:var(--shadow)}
+  .artifact-title-wrap strong{max-width:calc(100vw - 190px)}
 }

@@ -145,6 +145,35 @@
         <p class="disclaimer">AI can make mistakes. Check important information.</p>
       </footer>
     </main>
+
+    <aside class="artifact-panel hidden" id="artifactPanel" aria-label="Code artifact">
+      <div class="artifact-head">
+        <div class="artifact-title-wrap">
+          <div class="artifact-icon" data-icon="code"></div>
+          <div>
+            <strong id="artifactTitle">Generated file</strong>
+            <small id="artifactMeta">Code</small>
+          </div>
+        </div>
+        <div class="artifact-head-actions">
+          <button class="icon-btn" id="artifactDownloadBtn" title="Download file" aria-label="Download file"><span data-icon="download"></span></button>
+          <button class="icon-btn" id="artifactCopyBtn" title="Copy code" aria-label="Copy code"><span data-icon="copy"></span></button>
+          <button class="icon-btn" id="artifactCloseBtn" title="Close artifact" aria-label="Close artifact"><span data-icon="x"></span></button>
+        </div>
+      </div>
+      <div class="artifact-tabs">
+        <button class="active" id="artifactPreviewTab" type="button"><span data-icon="eye"></span><span>Preview</span></button>
+        <button id="artifactCodeTab" type="button"><span data-icon="code"></span><span>Code</span></button>
+      </div>
+      <div class="artifact-body">
+        <iframe class="artifact-preview" id="artifactPreview" title="Artifact preview" sandbox="allow-scripts allow-forms allow-modals"></iframe>
+        <pre class="artifact-code hidden" id="artifactCode"></pre>
+        <div class="artifact-empty hidden" id="artifactEmpty">
+          <strong>Preview unavailable</strong>
+          <p>This file can be reviewed in the Code tab or downloaded.</p>
+        </div>
+      </div>
+    </aside>
   </div>
 
   <div class="overlay hidden" id="overlay"></div>
