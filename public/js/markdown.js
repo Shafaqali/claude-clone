@@ -4,6 +4,13 @@ function escapeHtml(value) {
   }[c]));
 }
 
+function renderInline(value = "") {
+  return value
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+
 export function renderMarkdown(input = "") {
   const codeBlocks = [];
   let text = input.replace(/```([\w-]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
@@ -12,24 +19,79 @@ export function renderMarkdown(input = "") {
     return `@@CODE_${id}@@`;
   });
 
-  text = escapeHtml(text)
-    .replace(/^### (.*)$/gm, "<h3>$1</h3>")
-    .replace(/^## (.*)$/gm, "<h2>$1</h2>")
-    .replace(/^# (.*)$/gm, "<h1>$1</h1>")
-    .replace(/^\s*[-*] (.*)$/gm, "<li>$1</li>")
-    .replace(/^\s*\d+\.\s+(.*)$/gm, "<li>$1</li>")
-    .replace(/^> (.*)$/gm, "<blockquote>$1</blockquote>")
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const html = [];
+  let paragraph = [];
+  let list = null;
 
-  text = text.split(/\n{2,}/).map(block => {
-    if (block.startsWith("<h") || block.startsWith("<blockquote>") || block.startsWith("<li>")) return block;
-    return block.replace(/\n/g, "<br>");
-  }).join("<p></p>");
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    html.push(`<p>${paragraph.map(line => renderInline(line)).join("<br>")}</p>`);
+    paragraph = [];
+  };
 
-  text = text.replace(/(<li>.*?<\/li>)(?:<p><\/p>(?=<li>)|(?=<li>))/gs, "$1");
-  text = text.replace(/(?:<li>.*?<\/li>)+/gs, m => `<ul>${m}</ul>`);
+  const flushList = () => {
+    if (!list) return;
+    const tag = list.type;
+    html.push(`<${tag}>${list.items.map(item => `<li>${renderInline(item)}</li>`).join("")}</${tag}>`);
+    list = null;
+  };
+
+  escapeHtml(text).split(/\r?\n/).forEach(line => {
+    const trimmed = line.trim();
+    const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
+    const listItem = line.match(/^\s*(?:([-*])|(\d+)\.)\s+(.+)$/);
+    const quote = trimmed.match(/^&gt;\s+(.+)$/);
+    const codeToken = trimmed.match(/^@@CODE_(\d+)@@$/);
+
+    if (!trimmed) {
+      flushParagraph();
+      return;
+    }
+
+    if (/^\\?-{3,}$/.test(trimmed)) {
+      flushParagraph();
+      flushList();
+      html.push("<hr>");
+      return;
+    }
+
+    if (codeToken) {
+      flushParagraph();
+      flushList();
+      html.push(trimmed);
+      return;
+    }
+
+    if (heading) {
+      flushParagraph();
+      flushList();
+      html.push(`<h${heading[1].length}>${renderInline(heading[2])}</h${heading[1].length}>`);
+      return;
+    }
+
+    if (quote) {
+      flushParagraph();
+      flushList();
+      html.push(`<blockquote>${renderInline(quote[1])}</blockquote>`);
+      return;
+    }
+
+    if (listItem) {
+      flushParagraph();
+      const type = listItem[2] ? "ol" : "ul";
+      if (!list || list.type !== type) flushList();
+      list ||= { type, items: [] };
+      list.items.push(listItem[3]);
+      return;
+    }
+
+    flushList();
+    paragraph.push(line);
+  });
+
+  flushParagraph();
+  flushList();
+  text = html.join("");
 
   codeBlocks.forEach((block, i) => {
     const safe = escapeHtml(block.code);

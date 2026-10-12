@@ -167,8 +167,15 @@ button{cursor:pointer;color:inherit}
 .message.user .message-avatar{display:none}
 .message-content{min-width:0;max-width:100%;overflow-wrap:anywhere}
 .message-content p{margin:0 0 12px}
+.message-content p:empty{display:none}
 .message-content p:last-child{margin-bottom:0}
-.message-content ul,.message-content ol{padding-left:22px}
+.message-content h1,.message-content h2,.message-content h3{line-height:1.25;margin:0 0 10px;font-weight:700}
+.message-content h1{font-size:22px}
+.message-content h2{font-size:18px}
+.message-content h3{font-size:16px}
+.message-content ul,.message-content ol{padding-left:21px;margin:8px 0 12px}
+.message-content li{margin:5px 0;padding-left:2px}
+.message-content hr{height:1px;border:0;background:var(--border);margin:14px 0}
 .message-content blockquote{border-left:3px solid var(--accent);margin:12px 0;padding:2px 14px;color:var(--muted)}
 .message-content img,.message-content video,.message-content canvas,.message-content iframe{max-width:100%}
 .message-content code{overflow-wrap:anywhere}
@@ -179,7 +186,7 @@ button{cursor:pointer;color:inherit}
 .file-chip{width:38px;height:38px;border-radius:8px;background:var(--accent);color:var(--accent-text);display:grid;place-items:center;font-size:11px;font-weight:700;flex-shrink:0}
 .file-chip .svg-icon{width:19px;height:19px}
 
-.artifact-cards{display:grid;gap:8px;max-width:100%;margin:0 0 14px}
+.artifact-cards{display:grid;gap:8px;max-width:100%;margin:16px 0 0}
 .artifact-card{border:1px solid var(--border);border-radius:8px;background:var(--surface);display:flex;align-items:center;min-width:0;min-height:62px;overflow:hidden}
 .artifact-card-main{border:0;background:transparent;display:flex;align-items:center;gap:11px;min-width:0;flex:1;text-align:left;padding:10px 12px}
 .artifact-card-main>span:last-child{min-width:0}
@@ -271,13 +278,16 @@ button{cursor:pointer;color:inherit}
   .sidebar.collapsed .status-dot{display:block}
   .mobile-only{display:grid}
   .topbar{padding:0 10px}
-  .messages{padding-left:15px;padding-right:15px}
+  .messages{padding:22px 14px 96px}
   .composer-area{padding-left:9px;padding-right:9px}
   .shortcut-hint{display:none}
   .welcome{padding-top:12vh}
   .welcome h1{font-size:26px}
   .suggestions{grid-template-columns:1fr}
   .message.user .bubble{max-width:88%}
+  .message.assistant .bubble{font-size:14px;line-height:1.55}
+  .message-content ul,.message-content ol{padding-left:18px;margin:7px 0 10px}
+  .message-content li{margin:4px 0}
   .tool-popover{left:15px}
 }
 
@@ -287,6 +297,15 @@ button{cursor:pointer;color:inherit}
 }
 
 @media(max-width:560px){
+  .message{gap:9px;margin-bottom:22px}
+  .message-avatar{width:24px;height:24px;border-radius:7px}
+  .message.user .bubble{max-width:92%;padding:10px 12px}
+  .message-content h1{font-size:19px}
+  .message-content h2{font-size:17px}
+  .message-content h3{font-size:15px}
+  .message-content p{margin-bottom:10px}
+  .message-content hr{margin:10px 0}
+  .artifact-cards{margin-top:12px}
   .artifact-head{min-height:52px;padding:8px 10px}
   .artifact-icon{width:30px;height:30px}
   .artifact-tabs{height:40px}

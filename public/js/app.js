@@ -303,6 +303,21 @@ function removeRanges(content, ranges) {
     .trim();
 }
 
+function cleanDisplayContent(content, hasArtifacts = false) {
+  let output = content;
+
+  if (hasArtifacts) {
+    output = output
+      .split("\n")
+      .filter(line => !/^\s*\\?-{3,}\s*$/.test(line))
+      .join("\n");
+  }
+
+  return output
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function parseArtifacts(content = "") {
   const artifacts = [];
   const ranges = [];
@@ -354,7 +369,7 @@ function parseArtifacts(content = "") {
 
   return {
     artifacts,
-    displayContent: removeRanges(content, ranges)
+    displayContent: cleanDisplayContent(removeRanges(content, ranges), artifacts.length > 0)
   };
 }
 
@@ -902,7 +917,7 @@ function renderAssistantBubble(bubble, content, { streaming = false } = {}) {
   bubble.innerHTML = rendered || (streaming ? `<div class="typing"><i></i><i></i><i></i></div>` : "");
 
   if (artifacts.length) {
-    bubble.insertBefore(createArtifactCards(artifacts), bubble.firstChild);
+    bubble.appendChild(createArtifactCards(artifacts));
   }
 
   bindCodeCopyButtons(bubble);
