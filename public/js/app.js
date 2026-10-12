@@ -47,6 +47,7 @@ let authMode = "signin";
 let authBusy = false;
 let recoveryModeActive = false;
 let lastConfirmationEmail = "";
+let appSessionUserId = null;
 let activeArtifact = null;
 let activeArtifactGroup = [];
 let artifactView = "preview";
@@ -554,6 +555,77 @@ function save({ sync = true, chat = current(), touch = true } = {}) {
   if (sync && targetChat) queueCloudSave(targetChat);
 }
 
+function chatMessageCount(chat) {
+  return Array.isArray(chat?.messages) ? chat.messages.length : 0;
+}
+
+function chatContentSize(chat) {
+  return (Array.isArray(chat?.messages) ? chat.messages : [])
+    .reduce((total, message) => {
+      const contentSize = typeof message?.content === "string" ? message.content.length : 0;
+      const attachmentSize = typeof message?.attachment?.base64 === "string"
+        ? message.attachment.base64.length
+        : 0;
+      return total + contentSize + attachmentSize;
+    }, 0);
+}
+
+function chatTimestamp(chat) {
+  const timestamp = Number(chat?.updatedAt || chat?.createdAt || 0);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function shouldKeepLocalChat(localChat, cloudChat) {
+  if (!localChat) return false;
+  if (!cloudChat) return true;
+  if (isChatStreaming(localChat.id)) return true;
+
+  const localMessages = chatMessageCount(localChat);
+  const cloudMessages = chatMessageCount(cloudChat);
+  if (localMessages > cloudMessages) return true;
+  if (localMessages < cloudMessages) return false;
+
+  const localSize = chatContentSize(localChat);
+  const cloudSize = chatContentSize(cloudChat);
+  const localUpdatedAt = chatTimestamp(localChat);
+  const cloudUpdatedAt = chatTimestamp(cloudChat);
+
+  if (localSize > cloudSize && localUpdatedAt + 30000 >= cloudUpdatedAt) return true;
+  if (localSize < cloudSize && cloudUpdatedAt + 30000 >= localUpdatedAt) return false;
+
+  return localUpdatedAt >= cloudUpdatedAt;
+}
+
+function mergeCloudChats(cloudChats = []) {
+  const localChats = Array.isArray(state.chats) ? state.chats : [];
+  const localById = new Map(localChats.map(chat => [chat.id, chat]));
+  const cloudById = new Map(cloudChats.map(chat => [chat.id, chat]));
+  const localNeedsSync = [];
+  const mergedById = new Map();
+
+  cloudChats.forEach(cloudChat => {
+    const localChat = localById.get(cloudChat.id);
+    const selectedChat = shouldKeepLocalChat(localChat, cloudChat) ? localChat : cloudChat;
+    mergedById.set(selectedChat.id, selectedChat);
+
+    if (selectedChat === localChat) {
+      localNeedsSync.push(localChat);
+    }
+  });
+
+  localChats.forEach(localChat => {
+    if (cloudById.has(localChat.id)) return;
+    if (!chatMessageCount(localChat) && !isChatStreaming(localChat.id)) return;
+    mergedById.set(localChat.id, localChat);
+    localNeedsSync.push(localChat);
+  });
+
+  return {
+    chats: Array.from(mergedById.values()).sort((a, b) => chatTimestamp(b) - chatTimestamp(a)),
+    localNeedsSync
+  };
+}
+
 async function syncAllChatsToCloud() {
   if (!authReady || !databaseReady || !currentUser) return;
   try {
@@ -573,11 +645,13 @@ async function loadCloudState() {
     const cloudChats = await fetchCloudChats(headers);
 
     if (cloudChats.length) {
-      state.chats = cloudChats;
-      state.activeChatId = cloudChats.some(chat => chat.id === state.activeChatId)
+      const { chats, localNeedsSync } = mergeCloudChats(cloudChats);
+      state.chats = chats;
+      state.activeChatId = chats.some(chat => chat.id === state.activeChatId)
         ? state.activeChatId
-        : cloudChats[0].id;
+        : chats[0]?.id || state.activeChatId;
       saveState(state);
+      localNeedsSync.forEach(chat => queueCloudSave(chat));
     } else if (state.chats.some(chat => chat.messages.length > 0)) {
       await syncAllChatsToCloud();
     }
@@ -1122,6 +1196,7 @@ async function handleSignOut() {
     await signOut();
   } finally {
     currentUser = null;
+    appSessionUserId = null;
     setStateScope(null);
     state = loadState(null);
     closeArtifactPanel();
@@ -1131,6 +1206,7 @@ async function handleSignOut() {
 }
 
 async function enterApp() {
+  appSessionUserId = currentUser?.id || null;
   showApp();
   loadScopedState();
   updateProfile();
@@ -1350,7 +1426,10 @@ async function bootstrap() {
     currentUser = auth.user;
 
     onAuthChange(async (event, session) => {
-      currentUser = session?.user || null;
+      const nextUser = session?.user || null;
+      const nextUserId = nextUser?.id || null;
+      currentUser = nextUser;
+
       if (event === "PASSWORD_RECOVERY") {
         recoveryModeActive = true;
         setAuthMode("update", "Enter a new password for your account.");
@@ -1364,13 +1443,28 @@ async function bootstrap() {
         return;
       }
 
-      if (currentUser) {
-        await enterApp();
-      } else if (authReady) {
+      if (!currentUser) {
+        appSessionUserId = null;
+        abortAllStreams();
+        closeArtifactPanel();
+        setStateScope(null);
         state = loadState(null);
         setAuthMode("signin");
         showAuth();
+        return;
       }
+
+      if (event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
+        updateProfile();
+        return;
+      }
+
+      if (appSessionUserId === nextUserId) {
+        updateProfile();
+        return;
+      }
+
+      await enterApp();
     });
 
     if (authReady && recoveryFromUrl) {
