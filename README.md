@@ -162,7 +162,7 @@ $env:HOST="0.0.0.0"; npm start
 | --- | --- | --- | --- |
 | `GEMINI_API_KEY` | Yes | none | Gemini API key used by the backend |
 | `GEMINI_MODEL` | No | `gemini-3.8-flash` | Default Gemini model for chat requests |
-| `GEMINI_MAX_OUTPUT_TOKENS` | No | `16384` | Maximum Gemini output tokens for longer code/file generations; values are clamped between `4096` and `32768` |
+| `GEMINI_MAX_OUTPUT_TOKENS` | No | `16384` | Maximum Gemini output tokens for longer code/file generations; values are clamped between `16384` and `32768` |
 | `GEMINI_RETRY_ATTEMPTS` | No | `3` | Retry attempts for temporary Gemini overload/high-demand errors before moving to fallback models |
 | `GEMINI_RETRY_BASE_DELAY_MS` | No | `900` | Initial retry delay in milliseconds; later retries use exponential backoff |
 | `SUPABASE_URL` | Yes for login | none | Supabase project URL |

@@ -19,7 +19,7 @@ const DEFAULT_MODEL = "gemini-3.8-flash";
 const MODEL = process.env.GEMINI_MODEL || DEFAULT_MODEL;
 const maxOutputTokens = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS);
 const GENERATION_MAX_OUTPUT_TOKENS = Number.isFinite(maxOutputTokens)
-  ? Math.min(32768, Math.max(4096, maxOutputTokens))
+  ? Math.min(32768, Math.max(16384, maxOutputTokens))
   : 16384;
 const retryAttempts = Number(process.env.GEMINI_RETRY_ATTEMPTS);
 const retryBaseDelay = Number(process.env.GEMINI_RETRY_BASE_DELAY_MS);
