@@ -14,6 +14,7 @@ Add the key to your local `.env` file. Do not commit the real value:
 
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-3.8-flash
 ```
 
 The `.env.example` file contains only a safe placeholder and can be committed.
@@ -28,4 +29,5 @@ The `.env.example` file contains only a safe placeholder and can be committed.
 
 - Generate a new key if the existing key is suspended or revoked.
 - Confirm that you copied the complete key without spaces.
+- If Gemini returns `503` or "high demand", keep `GEMINI_MODEL=gemini-3.8-flash`; the server retries temporary spikes and then tries fallback models.
 - Never paste a real API key into documentation, source code, or Git history.

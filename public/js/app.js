@@ -27,8 +27,9 @@ import { startListening, speak } from "./voice.js";
 import { runTool } from "./tools.js";
 
 const availableModels = [
-  { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash" },
-  { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
+  { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash" },
+  { id: "gemini-3.7-flash", name: "Gemini 3.7 Flash" },
+  { id: "gemini-3.5-flash-lite", name: "Gemini 3.5 Flash-Lite" },
   { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
   { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite" }
 ];
@@ -1172,7 +1173,7 @@ async function bootstrap() {
   recoveryModeActive = recoveryFromUrl;
 
   if (!availableModels.some(model => model.id === state.settings.model)) {
-    state.settings.model = "gemini-3.6-flash";
+    state.settings.model = "gemini-3.8-flash";
     saveState(state);
   }
 

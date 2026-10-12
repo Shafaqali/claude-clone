@@ -15,9 +15,25 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
-const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+const DEFAULT_MODEL = "gemini-3.8-flash";
+const MODEL = process.env.GEMINI_MODEL || DEFAULT_MODEL;
 const GENERATION_MAX_OUTPUT_TOKENS = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 8192);
-const FALLBACK_MODELS = [MODEL, "gemini-3.6-flash", "gemini-3.5-flash", "gemini-2.5-flash"]
+const retryAttempts = Number(process.env.GEMINI_RETRY_ATTEMPTS);
+const retryBaseDelay = Number(process.env.GEMINI_RETRY_BASE_DELAY_MS);
+const GEMINI_RETRY_ATTEMPTS = Number.isFinite(retryAttempts)
+  ? Math.min(5, Math.max(1, retryAttempts))
+  : 3;
+const GEMINI_RETRY_BASE_DELAY_MS = Number.isFinite(retryBaseDelay)
+  ? Math.min(5000, Math.max(100, retryBaseDelay))
+  : 900;
+const AVAILABLE_MODELS = [
+  { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", note: "Recommended" },
+  { id: "gemini-3.7-flash", name: "Gemini 3.7 Flash", note: "Stable fallback" },
+  { id: "gemini-3.5-flash-lite", name: "Gemini 3.5 Flash-Lite", note: "Fast fallback" },
+  { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", note: "Legacy capacity" },
+  { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite", note: "Legacy lightweight" }
+];
+const FALLBACK_MODELS = [MODEL, ...AVAILABLE_MODELS.map(model => model.id)]
   .filter((model, index, models) => models.indexOf(model) === index);
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || "";
@@ -50,6 +66,129 @@ function getSupabaseAdmin() {
     supabaseAdmin = createAdminClient();
   }
   return supabaseAdmin;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function errorText(error) {
+  return String(error?.message || error || "");
+}
+
+function isGemini3Model(modelName = "") {
+  return /^gemini-3(?:\.|-)/i.test(modelName);
+}
+
+function generationConfigFor(modelName) {
+  const config = {
+    maxOutputTokens: GENERATION_MAX_OUTPUT_TOKENS
+  };
+
+  // Gemini 3+ rejects some old sampling parameters on the legacy endpoint.
+  if (!isGemini3Model(modelName)) {
+    config.temperature = 0.55;
+  }
+
+  return config;
+}
+
+function isSuspendedKeyError(error) {
+  const message = errorText(error);
+  return /suspended|CONSUMER_SUSPENDED/i.test(message);
+}
+
+function isInvalidApiKeyError(error) {
+  const message = errorText(error);
+  return /API key not valid|API_KEY_INVALID|invalid API key|key is invalid|invalid key/i.test(message);
+}
+
+function isAuthOrPermissionError(error) {
+  const message = errorText(error);
+  return /\b(401|403)\b|Forbidden|API key|permission/i.test(message);
+}
+
+function isRetryableGeminiError(error) {
+  const message = errorText(error);
+  return /\b(429|500|502|503|504)\b|high demand|overload|overloaded|temporar(?:y|ily)|unavailable|rate limit|RESOURCE_EXHAUSTED|UNAVAILABLE/i.test(message);
+}
+
+function isGeminiCapacityError(error) {
+  const message = errorText(error);
+  return /\b503\b|high demand|overload|overloaded|unavailable|UNAVAILABLE/i.test(message);
+}
+
+function userFacingGeminiError(error, triedModels = []) {
+  const message = errorText(error) || "Gemini request failed.";
+
+  if (isSuspendedKeyError(error)) {
+    return "Gemini API key is suspended. Create a new key in Google AI Studio, update GEMINI_API_KEY, and restart the server.";
+  }
+
+  if (isInvalidApiKeyError(error)) {
+    return "Invalid Gemini API key. Check GEMINI_API_KEY in your environment variables, then restart/redeploy the server.";
+  }
+
+  if (isAuthOrPermissionError(error)) {
+    return "Gemini rejected this API key or project permission. Check the key in Google AI Studio, then restart/redeploy the server.";
+  }
+
+  if (isGeminiCapacityError(error)) {
+    return `Gemini is temporarily busy. I tried these models: ${triedModels.join(", ")}. Please retry in a minute, or set GEMINI_MODEL=gemini-3.8-flash on the server.`;
+  }
+
+  if (/quota|429|RESOURCE_EXHAUSTED/i.test(message)) {
+    return "API quota or rate limit reached. Wait a moment before trying again, or check your Gemini API usage limits.";
+  }
+
+  if (/unavailable|not found/i.test(message)) {
+    return `Model access issue. Your API key may not have access to one of the requested Gemini models. Tried models: ${triedModels.join(", ")}.`;
+  }
+
+  return message;
+}
+
+async function retryGeminiOperation(operation, modelName) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= GEMINI_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation(attempt);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableGeminiError(error) || attempt === GEMINI_RETRY_ATTEMPTS) {
+        throw error;
+      }
+
+      const delay = GEMINI_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+      console.warn(`Gemini ${modelName} retry ${attempt}/${GEMINI_RETRY_ATTEMPTS} after ${delay}ms:`, errorText(error));
+      await sleep(delay);
+    }
+  }
+
+  throw lastError;
+}
+
+async function openGeminiStream(modelName, history, messageContent, context) {
+  return retryGeminiOperation(async () => {
+    const model = client.getGenerativeModel({
+      model: modelName,
+      systemInstruction: systemPrompt(context),
+      generationConfig: generationConfigFor(modelName)
+    });
+
+    const chat = model.startChat({ history });
+    const result = await chat.sendMessageStream(messageContent);
+    const iterator = result.stream[Symbol.asyncIterator]();
+    const firstChunk = await iterator.next();
+
+    return { result, iterator, firstChunk };
+  }, modelName);
+}
+
+function writeGeminiChunk(res, chunk) {
+  const text = chunk?.text?.();
+  if (text) res.write(text);
 }
 
 function expressToWebRequest(req) {
@@ -305,49 +444,59 @@ app.get("/api/test-key", async (req, res) => {
     });
   }
   
+  let lastError = null;
+  const triedModels = [];
+
   try {
-    const model = client.getGenerativeModel({ model: MODEL });
-    const result = await model.generateContent("Say 'Hello, API key is working!'");
-    const response = await result.response;
-    res.json({ 
-      success: true, 
-      message: response.text(),
-      model: MODEL
-    });
-  } catch (error) {
-    let errorMsg = "API key test failed";
-    let solution = "Check your API key";
-    
-    if (error.message?.includes('suspended') || error.message?.includes('CONSUMER_SUSPENDED')) {
-      errorMsg = "API key suspended";
-      solution = "Create new API key at https://aistudio.google.com/";
-    } else if (error.message?.includes('403') || error.message?.includes('Forbidden')) {
-      errorMsg = "API key invalid or no access";
-      solution = "Get new API key from https://aistudio.google.com/";
+    for (const testModel of FALLBACK_MODELS) {
+      triedModels.push(testModel);
+
+      try {
+        const model = client.getGenerativeModel({
+          model: testModel,
+          generationConfig: generationConfigFor(testModel)
+        });
+        const result = await retryGeminiOperation(
+          () => model.generateContent("Say 'Hello, API key is working!'"),
+          testModel
+        );
+        const response = await result.response;
+
+        return res.json({
+          success: true,
+          message: response.text(),
+          model: testModel,
+          triedModels
+        });
+      } catch (error) {
+        lastError = error;
+        console.warn(`Test-key model ${testModel} failed:`, errorText(error));
+
+        if (isSuspendedKeyError(error) || isInvalidApiKeyError(error)) {
+          break;
+        }
+      }
     }
-    
-    res.status(error.message?.includes("suspended") ? 403 : 400).json({
-      error: errorMsg,
-      details: error.message,
-      solution: solution
+
+    throw lastError;
+  } catch (error) {
+    res.status(isSuspendedKeyError(error) || isInvalidApiKeyError(error) ? 403 : 503).json({
+      error: userFacingGeminiError(error, triedModels),
+      details: errorText(error),
+      triedModels,
+      solution: "Check your API key and model access in Google AI Studio."
     });
   }
 });
 
 app.get("/api/health", (req, res) => {
-  const availableModels = [
-    { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash (Latest)" },
-    { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
-    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-    { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite" }
-  ];
-
   res.json({
     ok: true,
     configured: Boolean(process.env.GEMINI_API_KEY),
     model: MODEL,
     maxOutputTokens: GENERATION_MAX_OUTPUT_TOKENS,
-    availableModels: availableModels,
+    retryAttempts: GEMINI_RETRY_ATTEMPTS,
+    availableModels: AVAILABLE_MODELS,
     supabase: {
       configured: SUPABASE_AUTH_CONFIGURED,
       databaseConfigured: SUPABASE_DB_CONFIGURED
@@ -356,27 +505,20 @@ app.get("/api/health", (req, res) => {
 });
 
 app.get("/api/models", async (req, res) => {
-  const fallbackModels = [
-    { id: "gemini-3.6-flash", name: "Gemini 3.6 Flash (Latest)" },
-    { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash" },
-    { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash" },
-    { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite" }
-  ];
-  
   if (!process.env.GEMINI_API_KEY) {
-    return res.json({ models: fallbackModels, defaultModel: MODEL, live: false });
+    return res.json({ models: AVAILABLE_MODELS, defaultModel: MODEL, live: false });
   }
 
   try {
     // For now, just return the verified working models
     res.json({
-      models: fallbackModels,
+      models: AVAILABLE_MODELS,
       defaultModel: MODEL,
       live: true
     });
   } catch (error) {
     console.error("Models API error:", error);
-    res.json({ models: fallbackModels, defaultModel: MODEL, live: false });
+    res.json({ models: AVAILABLE_MODELS, defaultModel: MODEL, live: false });
   }
 });
 
@@ -391,27 +533,56 @@ app.post("/api/test-image", async (req, res) => {
     return res.status(400).json({ error: "base64 and mimeType required" });
   }
   
+  let lastError = null;
+  const triedModels = [];
+
   try {
-    const model = client.getGenerativeModel({ model: MODEL });
-    const result = await model.generateContent([
-      "Describe this image briefly:",
-      {
-        inlineData: {
-          data: base64,
-          mimeType: mimeType
+    for (const testModel of FALLBACK_MODELS) {
+      triedModels.push(testModel);
+
+      try {
+        const model = client.getGenerativeModel({
+          model: testModel,
+          generationConfig: generationConfigFor(testModel)
+        });
+        const result = await retryGeminiOperation(
+          () => model.generateContent([
+            "Describe this image briefly:",
+            {
+              inlineData: {
+                data: base64,
+                mimeType: mimeType
+              }
+            }
+          ]),
+          testModel
+        );
+
+        const response = await result.response;
+        return res.json({
+          success: true,
+          description: response.text(),
+          model: testModel,
+          triedModels
+        });
+      } catch (error) {
+        lastError = error;
+        console.warn(`Image test model ${testModel} failed:`, errorText(error));
+
+        if (isSuspendedKeyError(error) || isInvalidApiKeyError(error)) {
+          break;
         }
       }
-    ]);
-    
-    const response = await result.response;
-    res.json({ 
-      success: true, 
-      description: response.text(),
-      model: MODEL
-    });
+    }
+
+    throw lastError;
   } catch (error) {
     console.error('Image test error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(isSuspendedKeyError(error) || isInvalidApiKeyError(error) ? 403 : 503).json({
+      error: userFacingGeminiError(error, triedModels),
+      details: errorText(error),
+      triedModels
+    });
   }
 });
 
@@ -439,94 +610,101 @@ app.post("/api/chat", async (req, res) => {
     return res.status(400).json({ error: "At least one message is required." });
   }
 
-  // Try multiple model fallbacks if the selected model doesn't work
+  const history = cleanHistory(messages.slice(0, -1));
+  const lastMessage = messages[messages.length - 1];
+
+  let messageContent = [{ text: lastMessage.content }];
+
+  if (images && images.length > 0) {
+    console.log('Processing images for Gemini:', images.length);
+    for (const img of images) {
+      if (img.base64 && img.mimeType) {
+        console.log('Adding image:', { mimeType: img.mimeType, base64Length: img.base64.length });
+        messageContent.push({
+          inlineData: {
+            data: img.base64,
+            mimeType: img.mimeType
+          }
+        });
+      } else {
+        console.log('Invalid image data:', img);
+      }
+    }
+  }
+
+  console.log('Final messageContent:', messageContent.length, 'parts');
+
   const modelFallbacks = [selectedModel, ...FALLBACK_MODELS]
     .filter((model, index, models) => models.indexOf(model) === index);
 
   let lastError = null;
+  const triedModels = [];
   
   for (const testModel of modelFallbacks) {
+    triedModels.push(testModel);
+
     try {
       console.log(`Trying model: ${testModel}`);
-      const model = client.getGenerativeModel({
-        model: testModel,
-        systemInstruction: systemPrompt(context),
-        generationConfig: {
-          maxOutputTokens: GENERATION_MAX_OUTPUT_TOKENS,
-          temperature: 0.55
-        }
-      });
-
-      const history = cleanHistory(messages.slice(0, -1));
-      const lastMessage = messages[messages.length - 1];
-      
-      // Prepare the content for the last message
-      let messageContent = [{ text: lastMessage.content }];
-      
-      // Add images if provided
-      if (images && images.length > 0) {
-        console.log('Processing images for Gemini:', images.length);
-        for (const img of images) {
-          if (img.base64 && img.mimeType) {
-            console.log('Adding image:', { mimeType: img.mimeType, base64Length: img.base64.length });
-            messageContent.push({
-              inlineData: {
-                data: img.base64,
-                mimeType: img.mimeType
-              }
-            });
-          } else {
-            console.log('Invalid image data:', img);
-          }
-        }
-      }
-      
-      console.log('Final messageContent:', messageContent.length, 'parts');
-
-      const chat = model.startChat({ history });
-      const result = await chat.sendMessageStream(messageContent);
+      const { result, iterator, firstChunk } = await openGeminiStream(
+        testModel,
+        history,
+        messageContent,
+        context
+      );
 
       res.setHeader("Content-Type", "text/plain; charset=utf-8");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("X-Model", testModel);
+      res.setHeader("X-Model-Attempts", triedModels.join(","));
 
-      for await (const chunk of result.stream) {
-        const text = chunk.text();
-        if (text) res.write(text);
+      if (!firstChunk.done) {
+        writeGeminiChunk(res, firstChunk.value);
       }
 
-      const response = await result.response;
-      const finishReason = response?.candidates?.[0]?.finishReason;
-      if (finishReason && !["STOP", "FINISH_REASON_UNSPECIFIED"].includes(finishReason)) {
-        const limitNote = finishReason === "MAX_TOKENS"
-          ? "\n\n---\n_Generation reached the model output limit. Ask me to continue and I will continue from the last complete file._"
-          : `\n\n---\n_Generation stopped with finish reason: ${finishReason}._`;
-        res.write(limitNote);
-      }
+      try {
+        while (true) {
+          const chunk = await iterator.next();
+          if (chunk.done) break;
+          writeGeminiChunk(res, chunk.value);
+        }
 
-      res.end();
-      return; // Success! Exit the function
+        const response = await result.response;
+        const finishReason = response?.candidates?.[0]?.finishReason;
+        if (finishReason && !["STOP", "FINISH_REASON_UNSPECIFIED"].includes(finishReason)) {
+          const limitNote = finishReason === "MAX_TOKENS"
+            ? "\n\n---\n_Generation reached the model output limit. Ask me to continue and I will continue from the last complete file._"
+            : `\n\n---\n_Generation stopped with finish reason: ${finishReason}._`;
+          res.write(limitNote);
+        }
+
+        res.end();
+        return;
+      } catch (streamError) {
+        console.error(`Gemini stream interrupted for ${testModel}:`, errorText(streamError));
+        const interruptionNote = isRetryableGeminiError(streamError)
+          ? "\n\n---\n_Gemini connection was interrupted while streaming. Please retry; the server will automatically try fallback models again._"
+          : `\n\n---\n_Generation stopped: ${errorText(streamError)}_`;
+        res.write(interruptionNote);
+        res.end();
+        return;
+      }
       
     } catch (error) {
-      console.error(`Model ${testModel} failed:`, error.message);
+      console.error(`Model ${testModel} failed before stream start:`, errorText(error));
       lastError = error;
       
-      // Check for specific error types
-      if (error.message?.includes('suspended') || error.message?.includes('CONSUMER_SUSPENDED')) {
-        // API key suspended - show immediate error, don't try other models
+      if (isSuspendedKeyError(error)) {
         return res.status(403).json({
           error: "Gemini API key is suspended. Create a new key in Google AI Studio, update GEMINI_API_KEY in .env, and restart the server."
         });
       }
       
-      if (error.message?.includes('403') || error.message?.includes('Forbidden')) {
-        // Invalid API key format or no access
+      if (isInvalidApiKeyError(error)) {
         return res.status(403).json({
-          error: "Gemini rejected this API key or project permission. Create or check the key in Google AI Studio, then restart the server."
+          error: "Invalid Gemini API key. Check GEMINI_API_KEY in your environment variables, then restart/redeploy the server."
         });
       }
       
-      // If this isn't the last model in the list, continue to next
       if (testModel !== modelFallbacks[modelFallbacks.length - 1]) {
         continue;
       }
@@ -536,18 +714,12 @@ app.post("/api/chat", async (req, res) => {
   // If we get here, all models failed
   console.error('All models failed. Last error:', lastError);
   if (!res.headersSent) {
-    let errorMessage = lastError?.message || "All Gemini models failed.";
-    
-    // Handle specific errors
-    if (errorMessage.includes('unavailable') || errorMessage.includes('not found')) {
-      errorMessage = "**Model Access Issue**\n\nYour API key doesn't have access to the requested Gemini models. Please:\n\n1. **Get a new API key** from https://aistudio.google.com/\n2. **Make sure it starts with 'AIza'**\n3. **Restart the server** after updating .env\n\nTried models: " + modelFallbacks.join(', ');
-    } else if (errorMessage.includes('quota') || errorMessage.includes('429')) {
-      errorMessage = "API quota exceeded. Please wait a moment before trying again, or check your Gemini API usage limits.";
-    } else if (errorMessage.includes('API key')) {
-      errorMessage = "Invalid API key. Please check your GEMINI_API_KEY in the .env file.";
-    }
-    
-    res.status(500).json({ error: errorMessage });
+    const status = isGeminiCapacityError(lastError) || isRetryableGeminiError(lastError) ? 503 : 500;
+    res.status(status).json({
+      error: userFacingGeminiError(lastError, triedModels),
+      details: errorText(lastError),
+      triedModels
+    });
   } else {
     res.end();
   }

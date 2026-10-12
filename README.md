@@ -98,7 +98,9 @@ Edit `.env` and add your keys:
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
 PORT=3000
-GEMINI_MODEL=gemini-3.6-flash
+GEMINI_MODEL=gemini-3.8-flash
+GEMINI_MAX_OUTPUT_TOKENS=8192
+GEMINI_RETRY_ATTEMPTS=3
 
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_PUBLISHABLE_KEY=sb_publishable_your_key_here
@@ -159,8 +161,10 @@ $env:HOST="0.0.0.0"; npm start
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `GEMINI_API_KEY` | Yes | none | Gemini API key used by the backend |
-| `GEMINI_MODEL` | No | `gemini-3.6-flash` | Default Gemini model for chat requests |
+| `GEMINI_MODEL` | No | `gemini-3.8-flash` | Default Gemini model for chat requests |
 | `GEMINI_MAX_OUTPUT_TOKENS` | No | `8192` | Maximum Gemini output tokens for longer code/file generations |
+| `GEMINI_RETRY_ATTEMPTS` | No | `3` | Retry attempts for temporary Gemini overload/high-demand errors before moving to fallback models |
+| `GEMINI_RETRY_BASE_DELAY_MS` | No | `900` | Initial retry delay in milliseconds; later retries use exponential backoff |
 | `SUPABASE_URL` | Yes for login | none | Supabase project URL |
 | `SUPABASE_PUBLISHABLE_KEY` | Yes for login | none | Browser-safe Supabase publishable key |
 | `SUPABASE_SECRET_KEY` | Yes for database sync | none | Server-only Supabase secret key |
@@ -168,7 +172,7 @@ $env:HOST="0.0.0.0"; npm start
 | `PORT` | No | `3000` | Local server port |
 | `HOST` | No | `0.0.0.0` | Server bind host |
 
-You can change `GEMINI_MODEL` to another Gemini model ID supported by your API key and SDK version.
+You can change `GEMINI_MODEL` to another Gemini model ID supported by your API key and SDK version. The server automatically retries temporary Gemini capacity errors and falls back through the built-in model list when a selected model is overloaded.
 
 ## Useful Endpoints
 
@@ -201,6 +205,9 @@ Set these environment variables in your hosting dashboard:
 
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-3.8-flash
+GEMINI_MAX_OUTPUT_TOKENS=8192
+GEMINI_RETRY_ATTEMPTS=3
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_PUBLISHABLE_KEY=sb_publishable_your_key_here
 SUPABASE_SECRET_KEY=sb_secret_your_key_here
@@ -217,6 +224,8 @@ npm start
 ## Troubleshooting
 
 If the app says the API key is missing, confirm `.env` exists and restart the server.
+
+If Gemini returns `503` or "high demand", keep `GEMINI_MODEL=gemini-3.8-flash` and redeploy/restart. The server will retry temporary spikes and then try fallback models automatically.
 
 If Gemini returns a model-access error, try a model ID available to your account by changing `GEMINI_MODEL` in `.env`.
 
